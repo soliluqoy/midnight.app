@@ -172,6 +172,9 @@ select:focus,.sinp:focus,.sta:focus{border-color:var(--lav)}
 .hint.warn{color:var(--amber)}
 .acct{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #26223f}
 .acct .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.keyrow{display:flex;gap:6px;align-items:center;padding:6px 0 8px 16px;border-bottom:1px solid #26223f}
+.keyrow .sinp{flex:1}
+.sb.on{border-color:var(--lav)}
 .acct .n small{color:var(--faint);margin-left:6px;font-size:11px}
 .sdot{width:8px;height:8px;border-radius:50%;background:#4a4370;flex:none}
 .sdot.on{background:var(--green);box-shadow:0 0 6px var(--green)}

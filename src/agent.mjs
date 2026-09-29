@@ -300,10 +300,17 @@ ${extra}` : base;
 			pending.get(id)?.(value);
 			pending.delete(id);
 		},
-		async login(providerId, type) {
+		// `key` is an API key pasted in Settings: it answers the provider's first secret prompt.
+		async login(providerId, type, key) {
 			loginAbort = new AbortController();
+			const ui = interaction(loginAbort.signal);
+			if (key) {
+				const ask = ui.prompt;
+				let used = false;
+				ui.prompt = async (p) => (p.type === "secret" && !used ? ((used = true), key) : ask(p));
+			}
 			try {
-				await modelRuntime.login(providerId, type, interaction(loginAbort.signal));
+				await modelRuntime.login(providerId, type, ui);
 			} finally {
 				loginAbort = undefined;
 			}

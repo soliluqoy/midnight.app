@@ -5,6 +5,8 @@
 	let q = ""; // account search
 	let busy = ""; // provider id being logged in
 	let showAll = false;
+	let keyFor = ""; // provider id whose API-key box is open
+	let modal; // open auth prompt; kept across re-renders
 	const POPULAR = ["openai-codex", "anthropic", "github-copilot", "openai", "google", "xai", "openrouter", "mistral", "deepseek", "groq"];
 	let status = { text: "", err: false };
 	let scrollTo;
@@ -113,14 +115,35 @@
 		);
 	}
 
+	// Inline paste box for a provider's API key; the key is handed straight to the provider's own login.
+	function keyRow(a) {
+		const input = h("input", { class: "sinp", type: "password", placeholder: `Paste ${a.name} API key`, autocomplete: "off", spellcheck: "false" });
+		const go = () => {
+			const key = input.value.trim();
+			if (key) login(a.id, "api_key", key);
+		};
+		input.onkeydown = (e) => {
+			if (e.key === "Enter") go();
+			else if (e.key === "Escape") { e.stopPropagation(); keyFor = ""; render(); }
+		};
+		setTimeout(() => !document.activeElement?.matches("input, textarea") && input.focus(), 30);
+		return h(
+			"div",
+			{ class: "keyrow" },
+			input,
+			h("button", { class: "sb", title: "Paste from clipboard", onclick: async () => { input.value = (await midnight.clipboard()).trim(); input.focus(); } }, "Paste"),
+			h("button", { class: "sb pri", onclick: go }, "Save"),
+		);
+	}
+
 	function accountsSection() {
 		const all = S.accounts;
 		const collapsed = !q && !showAll;
 		const list = all.filter((a) => (q ? `${a.name} ${a.id}`.toLowerCase().includes(q.toLowerCase()) : !collapsed || a.configured || POPULAR.includes(a.id)));
-		const rows = list.map((a) => {
+		const rows = list.flatMap((a) => {
 			const isBusy = busy === a.id;
 			const canOut = a.configured && (a.source === "stored" || a.source === "runtime");
-			return h(
+			const row = h(
 				"div",
 				{ class: "acct" },
 				h("i", { class: `sdot${a.configured ? " on" : ""}` }),
@@ -129,10 +152,11 @@
 					? h("span", { class: "mono" }, "signing in…")
 					: [
 							!a.configured && a.oauth ? h("button", { class: "sb pri", onclick: () => login(a.id, "oauth") }, "Sign in") : null,
-							!a.configured && a.apiKey ? h("button", { class: "sb", onclick: () => login(a.id, "api_key") }, "API key") : null,
+							a.apiKey && !isBusy ? h("button", { class: `sb${keyFor === a.id ? " on" : ""}`, onclick: () => { keyFor = keyFor === a.id ? "" : a.id; render(); } }, a.configured ? "Use API key" : "API key") : null,
 							canOut ? h("button", { class: "sb danger", onclick: () => logout(a.id) }, "Sign out") : null,
 						],
 			);
+			return keyFor === a.id && !isBusy ? [row, keyRow(a)] : [row];
 		});
 		return h(
 			"div",
@@ -153,7 +177,7 @@
 			}),
 			h("div", {}, rows.length ? rows : h("p", { class: "hint" }, "No providers match.")),
 			!q ? h("button", { class: "sb", onclick: () => { showAll = !showAll; render(); } }, showAll ? "Show fewer" : `Show all ${all.length} providers`) : null,
-			h("p", { class: "hint" }, "Subscriptions (ChatGPT, Claude, Copilot…) sign in in your browser. API keys are stored by midnight.server, shared with its CLI."),
+			h("p", { class: "hint" }, "Subscriptions (ChatGPT, Claude, Copilot…) sign in in your browser. API key: click it, paste the key (Ctrl+V, right-click or Paste), Save. Keys are stored by midnight.server, shared with its CLI."),
 		);
 	}
 
@@ -315,11 +339,14 @@
 	}
 
 	// ---------- actions ----------
-	async function login(id, type) {
+	async function login(id, type, key) {
 		busy = id;
-		setStatus("Starting sign-in…");
-		const r = await api.login(id, type);
+		setStatus(key ? "Saving key…" : "Starting sign-in…");
+		const r = await api.login(id, type, key);
 		busy = "";
+		modal?.remove();
+		modal = undefined;
+		if (r.ok) keyFor = "";
 		status = r.ok ? { text: "Signed in.", err: false } : { text: r.error === "Cancelled" ? "" : r.error, err: true };
 		await refresh();
 	}
@@ -335,6 +362,7 @@
 		let value = "";
 		const done = (v) => {
 			modal.remove();
+			modal = undefined;
 			midnight.decide(m.id, v);
 		};
 		const box = h("div", { class: "box" }, h("p", {}, p.message));
@@ -348,15 +376,17 @@
 			);
 		} else {
 			const input = h("input", { class: "sinp", type: p.kind === "secret" ? "password" : "text", placeholder: p.placeholder ?? "" });
-			input.oninput = () => (value = input.value);
+			input.oninput = () => (value = input.value.trim());
 			input.onkeydown = (e) => e.key === "Enter" && value && done(value);
 			box.append(input);
+			box.append(h("button", { class: "sb", onclick: async () => { input.value = (await midnight.clipboard()).trim(); value = input.value; input.focus(); } }, "Paste from clipboard"));
 			setTimeout(() => input.focus(), 50);
 		}
 		const row = h("div", { class: "row2" }, h("button", { class: "sb", onclick: () => done(null) }, "Cancel"));
 		if (p.kind !== "select") row.append(h("button", { class: "sb pri", onclick: () => value && done(value) }, "OK"));
 		box.append(row);
-		const modal = h("div", { class: "modal" }, box);
+		modal?.remove();
+		modal = h("div", { class: "modal" }, box);
 		root.append(modal);
 	}
 
@@ -385,6 +415,7 @@
 			),
 			h("div", { class: "sbody" }, readingSection(), modelSection(), webSection(), accountsSection(), behaviourSection(), dataSection()),
 		);
+		if (modal) root.append(modal);
 		const body = root.querySelector(".sbody");
 		body.scrollTop = keep;
 		if (scrollTo) {

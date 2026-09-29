@@ -153,6 +153,15 @@ async function createWindows() {
 	place("idle");
 	capsule.webContents.setVisualZoomLevelLimits(1, 1);
 	capsule.webContents.on("did-finish-load", applyZoom);
+	// Right-click Cut / Copy / Paste, so keys and prompts can be pasted with the mouse too.
+	capsule.webContents.on("context-menu", (_e, p) => {
+		const items = p.isEditable
+			? [{ role: "cut", enabled: p.editFlags.canCut }, { role: "copy", enabled: p.editFlags.canCopy }, { role: "paste", enabled: p.editFlags.canPaste }, { type: "separator" }, { role: "selectAll" }]
+			: p.selectionText
+				? [{ role: "copy" }]
+				: [];
+		if (items.length) Menu.buildFromTemplate(items).popup({ window: capsule });
+	});
 	capsule.loadFile(dir("./ui/index.html"));
 
 	// Full-screen, click-through layer: the purple cursor and dashed frame that show what midnight is doing.
@@ -283,9 +292,9 @@ ipcMain.handle("settings:set", async (_e, patch) => {
 	}
 	return { settings: after, current: harness.current(), error };
 });
-ipcMain.handle("settings:login", async (_e, providerId, type) => {
+ipcMain.handle("settings:login", async (_e, providerId, type, key) => {
 	try {
-		await harness.login(providerId, type);
+		await harness.login(providerId, type, typeof key === "string" && key.trim() ? key.trim() : undefined);
 		await harness.reload();
 		pushCurrent();
 		return { ok: true, current: harness.current() };
