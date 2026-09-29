@@ -216,9 +216,9 @@ async function createWindows() {
 	ready = createHarness({ getBrowserContents: () => browserWin.webContents, web, emit, hooks: { onAct }, settings }).then(
 		(h) => (harness = h),
 	);
+	warmHelper(); // PowerShell + UI Automation take ~1s to start; overlap it with the core load, not the first summon
 	await ready;
 	capsule.showInactive();
-	warmHelper(); // PowerShell + UI Automation take ~1s to start; pay it now, not on the first summon
 }
 
 // ---- IPC ----

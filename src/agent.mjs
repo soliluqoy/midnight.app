@@ -59,6 +59,9 @@ How you answer (the user reads it in a small panel, so make it scannable):
   **Sources**
   1. [Page title](https://url)
 - Say so when sources disagree or are old. Never invent a source.
+- For "latest / current / most recent / who is / how much now" questions, compare the newest date you can see against today's
+  date. If nothing is recent enough, or a newer event may exist (a yearly event, a new release), search once more for it
+  (add the current year) before answering.
 - For tasks, the last message is the result: what you did, what you found, what needs the user.`;
 
 const LENGTH = {
@@ -66,6 +69,21 @@ const LENGTH = {
 	normal: "Answer length: normal. Usually under 200 words plus sources.",
 	detailed: "Answer length: detailed. Cover the topic thoroughly with sections, still scannable.",
 };
+
+// Screenshots dominate the token count of a desktop or browser run, and only the latest ones matter: the model acts on
+// what it sees now. Older images become a one-line note, so long missions stay fast and cheap.
+const KEEP_IMAGES = 3;
+export function pruneImages(messages) {
+	let seen = 0;
+	const out = messages.slice();
+	for (let i = out.length - 1; i >= 0; i--) {
+		const m = out[i];
+		if (m.role !== "toolResult" || !Array.isArray(m.content) || !m.content.some((c) => c.type === "image")) continue;
+		if (++seen <= KEEP_IMAGES) continue;
+		out[i] = { ...m, content: m.content.map((c) => (c.type === "image" ? { type: "text", text: "[older screenshot removed]" } : c)) };
+	}
+	return out;
+}
 
 // Prompt prefixes the user can type: "?" quick answer, "??" deep research.
 export function expandPrompt(t) {
@@ -244,6 +262,8 @@ ${extra}` : base;
 			sessionManager: SessionManager.inMemory(cwd),
 			settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 2 } }),
 		}));
+		const transform = session.agent.transformContext;
+		session.agent.transformContext = async (messages, signal) => pruneImages(transform ? await transform(messages, signal) : messages);
 		session.subscribe((e) => {
 			if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") {
 				emit({ type: "text", delta: e.assistantMessageEvent.delta });

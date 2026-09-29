@@ -162,6 +162,15 @@ export function createWeb(settings) {
 		if (cache.size > 200) cache.delete(cache.keys().next().value);
 	};
 
+	// Concurrent requests for the same thing share one load; a blocked engine is skipped for a while.
+	const inflight = new Map();
+	const once = (k, fn) => {
+		let p = inflight.get(k);
+		if (!p) inflight.set(k, (p = fn().finally(() => inflight.delete(k))));
+		return p;
+	};
+	const blocked = new Map(); // engine -> until
+
 	// ---- window pool ----
 	const idle = [];
 	const all = new Set();
@@ -232,27 +241,37 @@ export function createWeb(settings) {
 	async function readOne(url, signal) {
 		const key = `page:${url}`;
 		let page = cached(key);
-		if (!page) {
-			const w = await acquire();
-			try {
-				await load(w, url, signal);
-				let r = await w.webContents.executeJavaScript(EXTRACT, true);
-				if (r.text.length < 300 && !signal?.aborted) {
-					await sleep(1200); // client-rendered page: give it a moment
-					r = await w.webContents.executeJavaScript(EXTRACT, true);
-				}
-				page = { url: w.webContents.getURL() || url, title: r.title || url, desc: r.desc, text: r.text.replace(/\n{3,}/g, "\n\n") };
-				if (page.text.length > 200) remember(key, page);
-			} finally {
-				w.webContents.stop();
-				release(w);
-			}
-		}
+		if (!page) page = await once(key, () => fetchPage(url, key, signal));
 		return page;
 	}
 
-	async function search(q, engine, signal) {
-		const order = [engine, ...["google", "bing", "duckduckgo"].filter((e) => e !== engine)];
+	async function fetchPage(url, key, signal) {
+		const w = await acquire();
+		try {
+			await load(w, url, signal);
+			let r = await w.webContents.executeJavaScript(EXTRACT, true);
+			if (r.text.length < 300 && !signal?.aborted) {
+				await sleep(1200); // client-rendered page: give it a moment
+				r = await w.webContents.executeJavaScript(EXTRACT, true);
+			}
+			const page = { url: w.webContents.getURL() || url, title: r.title || url, desc: r.desc, text: r.text.replace(/\n{3,}/g, "\n\n") };
+			if (page.text.length > 200) remember(key, page);
+			return page;
+		} finally {
+			w.webContents.stop();
+			release(w);
+		}
+	}
+
+	function search(q, engine, signal) {
+		return once(`serp:${engine}:${q}`, () => runSearch(q, engine, signal));
+	}
+
+	async function runSearch(q, engine, signal) {
+		// engines that blocked us recently go last, so a CAPTCHA costs one search, not every search
+		const order = [engine, ...["google", "bing", "duckduckgo"].filter((e) => e !== engine)].sort(
+			(a, b) => Number((blocked.get(a) ?? 0) > Date.now()) - Number((blocked.get(b) ?? 0) > Date.now()),
+		);
 		let last = { results: [], answer: "", engine };
 		for (const e of order) {
 			const key = `serp:${e}:${q}`;
@@ -263,7 +282,8 @@ export function createWeb(settings) {
 				await load(w, SERP[e].url(q), signal, { grace: 1200 });
 				const r = await w.webContents.executeJavaScript(SERP[e].js, true);
 				last = { ...r, engine: e };
-				if (!r.blocked && r.results.length) {
+				if (r.blocked) blocked.set(e, Date.now() + 10 * 60 * 1000);
+				else if (r.results.length) {
 					remember(key, last);
 					return last;
 				}
