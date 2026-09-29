@@ -1,0 +1,91 @@
+{
+	"name": "midnight-app",
+	"productName": "midnight",
+	"version": "0.1.0",
+	"description": "midnight: a desktop capsule that searches, reads and works on your computer in plain view",
+	"author": "soliluqoy",
+	"license": "MIT",
+	"homepage": "https://github.com/soliluqoy/midnight.app",
+	"repository": "github:soliluqoy/midnight.app",
+	"private": true,
+	"type": "module",
+	"main": "src/main.mjs",
+	"scripts": {
+		"start": "electron .",
+		"vendor": "node scripts/vendor-core.mjs",
+		"dist": "electron-builder --publish never"
+	},
+	"dependencies": {
+		"@earendil-works/chord": "file:vendor/earendil-works-chord-0.87.1.tgz",
+		"@earendil-works/pi-agent-core": "file:vendor/earendil-works-pi-agent-core-0.87.1.tgz",
+		"@earendil-works/pi-ai": "file:vendor/earendil-works-pi-ai-0.87.1.tgz",
+		"@earendil-works/pi-coding-agent": "file:vendor/earendil-works-pi-coding-agent-0.87.1.tgz",
+		"@earendil-works/pi-telemetry": "file:vendor/earendil-works-pi-telemetry-0.87.1.tgz",
+		"@earendil-works/pi-tui": "file:vendor/earendil-works-pi-tui-0.87.1.tgz",
+		"typebox": "1.3.27"
+	},
+	"devDependencies": {
+		"electron": "44.4.5",
+		"electron-builder": "^26.15.3"
+	},
+	"overrides": {
+		"@earendil-works/chord": "$@earendil-works/chord",
+		"@earendil-works/pi-telemetry": "$@earendil-works/pi-telemetry",
+		"@earendil-works/pi-ai": "$@earendil-works/pi-ai",
+		"@earendil-works/pi-agent-core": "$@earendil-works/pi-agent-core",
+		"@earendil-works/pi-tui": "$@earendil-works/pi-tui",
+		"@earendil-works/pi-coding-agent": "$@earendil-works/pi-coding-agent"
+	},
+	"build": {
+		"appId": "app.midnight.capsule",
+		"productName": "midnight",
+		"asar": false,
+		"files": [
+			"src/**/*",
+			"package.json"
+		],
+		"directories": {
+			"output": "release"
+		},
+		"artifactName": "midnight-${os}-${arch}.${ext}",
+		"win": {
+			"target": [
+				{
+					"target": "zip",
+					"arch": [
+						"x64"
+					]
+				}
+			]
+		},
+		"mac": {
+			"target": [
+				{
+					"target": "zip",
+					"arch": [
+						"arm64"
+					]
+				}
+			],
+			"category": "public.app-category.productivity",
+			"identity": null
+		},
+		"linux": {
+			"target": [
+				{
+					"target": "AppImage",
+					"arch": [
+						"x64"
+					]
+				}
+			],
+			"category": "Utility"
+		}
+	},
+	"allowScripts": {
+		"esbuild@0.28.2": true,
+		"protobufjs@7.6.6": true,
+		"electron@44.4.5": true,
+		"electron-winstaller@5.4.0": true
+	}
+}

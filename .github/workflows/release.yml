@@ -1,0 +1,79 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win --x64
+            glob: release/*.zip
+            out: midnight-win-x64.zip
+          - os: macos-14
+            args: --mac --arm64
+            glob: release/*.zip
+            out: midnight-mac-arm64.zip
+          - os: ubuntu-latest
+            args: --linux --x64
+            glob: release/*.AppImage
+            out: midnight-linux-x64.AppImage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - name: Build
+        run: npx electron-builder ${{ matrix.args }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Stable file name (the installers download releases/latest/download/<name>)
+        shell: bash
+        run: |
+          f=$(ls ${{ matrix.glob }} | head -n1)
+          [ "$f" = "release/${{ matrix.out }}" ] || mv "$f" "release/${{ matrix.out }}"
+          ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.out }}
+          path: release/${{ matrix.out }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            **Windows (x64)**, in PowerShell:
+            ```powershell
+            irm https://raw.githubusercontent.com/soliluqoy/midnight.app/main/install.ps1 | iex
+            ```
+
+            **macOS (Apple silicon) / Linux (x86_64)**, in a terminal:
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/soliluqoy/midnight.app/main/install.sh | sh
+            ```
+
+            Summon with Ctrl+Alt+M (Cmd+Alt+M on macOS), then sign in from the gear icon.
+            Desktop control (computer use) is Windows-only for now. Builds are unsigned.
