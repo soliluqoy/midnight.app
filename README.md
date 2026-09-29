@@ -2,6 +2,10 @@
 
 The midnight.server desktop capsule: a small pill above your taskbar that searches, reads and works in plain view, and asks before anything leaves your computer. It runs on the AI subscription or API key you sign in with (ChatGPT, Claude, Copilot, …) through the [midnight.server](https://github.com/soliluqoy/midnight.server) core.
 
+<a href="https://soliluqoy.github.io/midnight-website/desktop/"><img src="docs/capsule.webp" alt="The midnight.app capsule floating above the taskbar: it takes a request, shows a plan, and works through files and the browser in plain view" width="100%"></a>
+
+<sub>From the <a href="https://soliluqoy.github.io/midnight-website/desktop/">two-minute walkthrough</a> on the website.</sub>
+
 ## Install
 
 **Windows (x64)**, in PowerShell (per-user, no admin):
