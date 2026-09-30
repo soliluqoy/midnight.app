@@ -11,7 +11,10 @@ import { Type } from "typebox";
 import { browserTool } from "./tools/browser.mjs";
 import { computerTool } from "./tools/computer.mjs";
 import { userBrowserTool, userContext } from "./tools/userbrowser.mjs";
+import { chooseDefaultModel, pruneImages } from "./harness-utils.mjs";
 
+// Luna when the catalog has it, then the older default, then any vision model.
+const PREFERRED_MODEL = "gpt-6-luna";
 const DEFAULT_MODEL = "gpt-5.5";
 
 const SYSTEM_PROMPT = `You are midnight.server, a small desktop companion that lives in a capsule above the user's taskbar.
@@ -69,21 +72,6 @@ const LENGTH = {
 	normal: "Answer length: normal. Usually under 200 words plus sources.",
 	detailed: "Answer length: detailed. Cover the topic thoroughly with sections, still scannable.",
 };
-
-// Screenshots dominate the token count of a desktop or browser run, and only the latest ones matter: the model acts on
-// what it sees now. Older images become a one-line note, so long missions stay fast and cheap.
-const KEEP_IMAGES = 3;
-export function pruneImages(messages) {
-	let seen = 0;
-	const out = messages.slice();
-	for (let i = out.length - 1; i >= 0; i--) {
-		const m = out[i];
-		if (m.role !== "toolResult" || !Array.isArray(m.content) || !m.content.some((c) => c.type === "image")) continue;
-		if (++seen <= KEEP_IMAGES) continue;
-		out[i] = { ...m, content: m.content.map((c) => (c.type === "image" ? { type: "text", text: "[older screenshot removed]" } : c)) };
-	}
-	return out;
-}
 
 // Prompt prefixes the user can type: "?" quick answer, "??" deep research.
 export function expandPrompt(t) {
@@ -216,13 +204,7 @@ ${extra}` : base;
 		const want = provider && model ? modelRuntime.getModel(provider, model) : undefined;
 		if (want && modelRuntime.hasConfiguredAuth(provider)) return want;
 		const avail = await modelRuntime.getAvailable();
-		const sees = (m) => m.input?.includes("image");
-		return (
-			avail.find((m) => m.provider === "openai-codex" && m.id === DEFAULT_MODEL) ??
-			avail.find((m) => sees(m) && m.reasoning) ??
-			avail.find(sees) ??
-			avail[0]
-		);
+		return chooseDefaultModel(avail, { preferred: PREFERRED_MODEL, fallback: DEFAULT_MODEL });
 	}
 
 	const interaction = (signal) => ({
@@ -263,7 +245,9 @@ ${extra}` : base;
 			settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 2 } }),
 		}));
 		const transform = session.agent.transformContext;
-		session.agent.transformContext = async (messages, signal) => pruneImages(transform ? await transform(messages, signal) : messages);
+		// Screenshots dominate a desktop run's tokens and only the latest matter; older ones become a one-line note.
+		// Prune first so compaction never pays for them either.
+		session.agent.transformContext = async (messages, signal) => (transform ? transform(pruneImages(messages), signal) : pruneImages(messages));
 		session.subscribe((e) => {
 			if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") {
 				emit({ type: "text", delta: e.assistantMessageEvent.delta });

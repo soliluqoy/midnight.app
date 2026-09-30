@@ -241,7 +241,7 @@ export function computerTool(state) {
 		description:
 			"Control the user's Windows desktop (any app, including the user's own browser) with mouse and keyboard. " +
 			"Most accurate: `elements` lists the clickable controls of a window (from Windows UI Automation) with ids and exact centers; " +
-			"then `click_element` / `set_value` by id. `read_text` returns the exact text of a window or element (documents, editors, the " +
+			"then `click_element` / `set_value` by id (a window with no controls returns a screenshot instead). `read_text` returns the exact text of a window or element (documents, editors, the " +
 			"page in the user's browser) without a screenshot. Use screenshots to see, `zoom` to read small text, `windows` / `focus_window` " +
 			"to switch apps, `launch` to open an app or file. Coordinates are pixels of the most recent screenshot. " +
 			"Actions return a fresh screenshot unless screenshot is false. Prefer the `browser`, `search` and `read_pages` tools for web work " +
@@ -309,7 +309,13 @@ export function computerTool(state) {
 					state.lastScale = g.scale;
 					const head = `Window ${r.window.hwnd}: ${r.window.proc} · ${r.window.title}${r.cut ? " (list cut short; zoom or scroll for more)" : ""}`;
 					const lines = r.items.map((e) => describeEl(e, g.scale));
-					if (p.screenshot !== true) return text(`${head}\n${lines.join("\n") || "(no controls exposed; use screenshot and coordinates)"}`);
+					// No controls (custom-drawn apps, games, elevated windows): send the screenshot now instead of a round trip for it.
+					if (!lines.length) {
+						note = `${head}\n(no controls exposed; here is a screenshot: act by coordinates, zoom to read small text)`;
+						wantShot = true;
+						break;
+					}
+					if (p.screenshot !== true) return text(`${head}\n${lines.join("\n")}`);
 					note = `${head}\n${lines.join("\n")}`;
 					break;
 				}
