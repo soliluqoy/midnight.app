@@ -1,5 +1,6 @@
 import { BrowserWindow, session as electronSession } from "electron";
 import { Type } from "typebox";
+import { dedupeSearchRuns } from "../harness-utils.mjs";
 
 // Fast, text-only web access: search results as data and parallel page reading in a small pool of hidden
 // windows, with images, media, fonts and trackers blocked. The interactive `browser` tool stays for clicking.
@@ -8,6 +9,9 @@ const PARTITION = "persist:midnight-research";
 const POOL = 4;
 const TTL = 30 * 60 * 1000;
 const PAGE_CHARS = 7000; // per page, after trimming to the passages that match the query
+const FETCH_TIMEOUT = 5000; // plain fetch before falling back to a window
+const MAX_HTML = 3_000_000;
+const PREFETCH = 4; // top results fetched while the model reads the result list
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const BLOCK_TYPES = new Set(["image", "media", "font", "object", "ping", "cspReport"]);
@@ -17,7 +21,8 @@ const BLOCK_HOSTS =
 // ---- page scripts (run inside the page) ----
 
 // Main-content extraction: drop chrome (nav, footers, ads), pick the densest content root, emit light markdown.
-const EXTRACT = `(() => {
+// Takes a document so it runs on the live page and on HTML parsed with DOMParser alike.
+const EXTRACT_FN = `((document) => {
   const clone = document.body ? document.body.cloneNode(true) : null;
   if (!clone) return { title: document.title, text: "" };
   clone.querySelectorAll('script,style,noscript,svg,canvas,iframe,form,button,input,select,textarea,nav,header,footer,aside,dialog,[role=navigation],[role=banner],[role=contentinfo],[role=complementary],[aria-hidden=true],[hidden],.ad,.ads,.advert,.advertisement,.cookie,.cookies,.consent,.newsletter,.share,.social,.related,.comments,#comments,.sidebar,.breadcrumb,.breadcrumbs,.menu,.nav,.navbar,.footer,.header,.popup,.modal').forEach((e) => e.remove());
@@ -50,7 +55,8 @@ const EXTRACT = `(() => {
   if (text.length < 200) text = (root.innerText || '').replace(/\\n{3,}/g, '\\n\\n');
   const desc = document.querySelector('meta[name=description],meta[property="og:description"]')?.content || '';
   return { title: document.title, text, desc };
-})()`;
+})`;
+const EXTRACT = `${EXTRACT_FN}(document)`;
 
 const SERP = {
 	google: {
@@ -238,11 +244,75 @@ export function createWeb(settings) {
 		}
 	}
 
+	// Plain fetch first; a window only when the page needs one (script-rendered, challenged, not HTML).
 	async function readOne(url, signal) {
 		const key = `page:${url}`;
 		let page = cached(key);
-		if (!page) page = await once(key, () => fetchPage(url, key, signal));
+		if (!page)
+			page = await once(key, async () => (settings.get().fastPages && (await fetchFast(url))) || fetchPage(url, key, signal));
 		return page;
+	}
+
+	// Warm the cache without holding a window. Shares the in-flight fetch with a later readOne.
+	function prefetch(url) {
+		if (settings.get().fastPages && !cached(`page:${url}`)) fetchFast(url).catch(() => {});
+	}
+
+	// ---- fast path: fetch + DOMParser in one blank window that never navigates ----
+	let parser = null;
+	let parserReady = null;
+	const parse = async (html) => {
+		if (!parser || parser.isDestroyed()) {
+			parser = new BrowserWindow({ show: false, webPreferences: { sandbox: true, images: false, spellcheck: false, backgroundThrottling: false } });
+			parserReady = parser.loadURL("about:blank");
+		}
+		const w = parser;
+		await parserReady;
+		return w.webContents.executeJavaScript(
+			`${EXTRACT_FN}(new DOMParser().parseFromString(${JSON.stringify(html.slice(0, MAX_HTML))}, "text/html"))`,
+			true,
+		);
+	};
+	const needsWindow = new Map(); // host -> until; hosts whose pages only render in a browser
+
+	// No caller signal: a prefetch and a read may share this, and it is bounded by its own timeout.
+	function fetchFast(url) {
+		const key = `page:${url}`;
+		return once(`fast:${url}`, async () => {
+			let host = "";
+			try {
+				host = new URL(url).hostname;
+			} catch {
+				return null;
+			}
+			if ((needsWindow.get(host) ?? 0) > Date.now()) return null;
+			try {
+				const res = await ses.fetch(url, {
+					headers: { accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5", "accept-language": "en" },
+					signal: AbortSignal.timeout(FETCH_TIMEOUT),
+				});
+				const type = res.headers.get("content-type") ?? "";
+				if (!res.ok || +(res.headers.get("content-length") ?? 0) > MAX_HTML) return null;
+				let page;
+				let heavy = false; // lots of markup, little text: a script-rendered site
+				if (/html|xml/i.test(type)) {
+					const html = await res.text();
+					const r = await parse(html);
+					heavy = html.length > 50_000;
+					page = { url: res.url || url, title: r.title || url, desc: r.desc, text: r.text.replace(/\n{3,}/g, "\n\n") };
+				} else if (/^text\/|json/i.test(type)) {
+					page = { url: res.url || url, title: url, desc: "", text: (await res.text()).slice(0, MAX_HTML) };
+				} else return null; // PDFs and the like: let the browser handle them
+				if (page.text.length < 300) {
+					if (heavy) needsWindow.set(host, Date.now() + TTL);
+					return null;
+				}
+				remember(key, page);
+				return page;
+			} catch {
+				return null;
+			}
+		});
 	}
 
 	async function fetchPage(url, key, signal) {
@@ -310,7 +380,9 @@ export function createWeb(settings) {
 		}),
 		async execute(_id, p, signal) {
 			const engine = settings.get().searchEngine;
-			const runs = await Promise.all(p.queries.slice(0, 4).map((q) => search(q, engine, signal).then((r) => ({ q, ...r }))));
+			const runs = dedupeSearchRuns(
+				await Promise.all(p.queries.slice(0, 4).map((q) => search(q, engine, signal).then((r) => ({ q, ...r })))),
+			);
 			const lines = [];
 			const urls = [];
 			for (const r of runs) {
@@ -322,6 +394,10 @@ export function createWeb(settings) {
 					urls.push(x.url);
 				});
 			}
+			// start on the likely reads now: each query's best hits first, then the rest
+			const ranked = [];
+			for (let i = 0; i < 8; i++) for (const r of runs) if (r.results[i]) ranked.push(r.results[i].url);
+			for (const u of [...new Set(ranked)].slice(0, PREFETCH)) prefetch(u);
 			return text(lines.join("\n"), { urls });
 		},
 	};
@@ -371,11 +447,13 @@ export function createWeb(settings) {
 		},
 		clear: async () => {
 			cache.clear();
+			needsWindow.clear();
 			await ses.clearStorageData();
 			await ses.clearCache();
 		},
 		dispose() {
 			for (const w of all) if (!w.isDestroyed()) w.destroy();
+			if (parser && !parser.isDestroyed()) parser.destroy();
 		},
 	};
 }

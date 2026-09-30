@@ -1,7 +1,7 @@
 {
 	"name": "midnight-app",
 	"productName": "midnight",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "midnight: a desktop capsule that searches, reads and works on your computer in plain view",
 	"author": "soliluqoy",
 	"license": "MIT",
@@ -12,6 +12,7 @@
 	"main": "src/main.mjs",
 	"scripts": {
 		"start": "electron .",
+		"test": "node --test",
 		"vendor": "node scripts/vendor-core.mjs",
 		"dist": "electron-builder --publish never"
 	},

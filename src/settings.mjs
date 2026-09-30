@@ -18,7 +18,7 @@ export const DEFAULTS = {
 	answerLength: "normal", // brief | normal | detailed
 	// web
 	searchEngine: "google", // google | bing | duckduckgo (falls back to the others when blocked)
-	fastPages: true, // block images, media, fonts and trackers when reading pages
+	fastPages: true, // fetch pages without a window when possible; block images, media, fonts and trackers otherwise
 	autoApproveReadOnly: true, // plans that only read (no sends, no desktop) run without the Approve click
 	shareContext: true, // tell the model which window / page the user was on when they opened the capsule
 };

@@ -307,7 +307,7 @@
 					onPick: (v) => save({ searchEngine: v }),
 				}),
 			),
-			h("div", { class: "field" }, h("label", {}, "Fast page reading", h("small", {}, "Skip images, video, fonts and trackers when reading")), toggle(st.fastPages, () => save({ fastPages: !st.fastPages }))),
+			h("div", { class: "field" }, h("label", {}, "Fast page reading", h("small", {}, "Fetch pages directly when possible; skip images, video, fonts and trackers")), toggle(st.fastPages, () => save({ fastPages: !st.fastPages }))),
 			h(
 				"div",
 				{ class: "field" },
