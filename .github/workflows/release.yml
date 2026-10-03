@@ -65,6 +65,7 @@ jobs:
           for f in *.zip *.AppImage; do
             [ -f "$f" ] || continue
             case "$f" in
+              midnight-win-x64.zip|midnight-mac-arm64.zip|midnight-linux-x64.AppImage) ;;
               *win*) mv "$f" midnight-win-x64.zip ;;
               *mac*) mv "$f" midnight-mac-arm64.zip ;;
               *.AppImage) mv "$f" midnight-linux-x64.AppImage ;;
