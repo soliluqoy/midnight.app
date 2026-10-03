@@ -6,7 +6,6 @@ export const SETTINGS_VERSION = 2;
 
 export const DEFAULTS = {
 	version: SETTINGS_VERSION,
-	engine: "mission", // mission | legacy (the 0.1 engine, kept for rollback)
 	provider: "", // "" = choose automatically from what you are signed in to
 	model: "",
 	taskModel: "", // "provider|id" for plans, computer use and research; "" = a stronger model when "model" is the fast default
@@ -25,7 +24,6 @@ export const DEFAULTS = {
 	// web
 	searchEngine: "google", // google | bing | duckduckgo (falls back to the others when blocked)
 	fastPages: true, // fetch pages without a window when possible; block images, media, fonts and trackers otherwise
-	autoApproveReadOnly: true, // legacy engine only
 	shareContext: true, // tell the model which window / page the user was on when they opened the capsule
 	// autonomy (mission engine)
 	onboarded: false,
@@ -42,28 +40,10 @@ export const DEFAULTS = {
 
 const file = () => path.join(app.getPath("userData"), "settings.json");
 
-/**
- * Import of v1 settings (plan ch. 19, step 6): known keys map one to one; unknown keys are kept; the original file is
- * copied once to settings.v1.json before anything is rewritten, so a repeated import is a no-op.
- */
-export function migrateSettings(data, dir) {
-	if ((data.version ?? 1) >= SETTINGS_VERSION) return data;
-	const backup = path.join(dir, "settings.v1.json");
-	if (!fs.existsSync(backup)) fs.writeFileSync(backup, JSON.stringify(data, null, 2));
-	const out = { ...data, version: SETTINGS_VERSION };
-	// Meaning changed: v1 shared the foreground window by default; that stays, but autonomy starts at "Ask me".
-	out.mode = "ask";
-	out.onboarded = false;
-	return out;
-}
-
 export function loadSettings() {
 	let data = {};
 	try {
 		data = JSON.parse(fs.readFileSync(file(), "utf8"));
-	} catch {}
-	try {
-		data = migrateSettings(data, path.dirname(file()));
 	} catch {}
 	const s = { ...DEFAULTS };
 	const unknown = {};
@@ -78,7 +58,7 @@ export function loadSettings() {
 		fs.writeFileSync(tmp, JSON.stringify({ ...unknown, ...s }, null, 2));
 		fs.renameSync(tmp, file());
 	};
-	if ((data.version ?? 1) !== SETTINGS_VERSION || !fs.existsSync(file())) {
+	if (data.version !== SETTINGS_VERSION || !fs.existsSync(file())) {
 		try {
 			write();
 		} catch {}

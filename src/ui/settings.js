@@ -527,7 +527,6 @@
 				),
 			),
 			field("Demo connectors", "Fixture CRM and mail for trying the sales-brief workflow. Nothing is really sent.", toggle(!!st.demoConnectors, () => save({ demoConnectors: !st.demoConnectors }).then(() => setStatus("Restart the engine (tray → Restart engine) to apply.")), "Demo connectors")),
-			field("Engine", "Previous engine, for rollback; needs a restart", segmented(st.engine, [{ value: "mission", label: "Mission" }, { value: "legacy", label: "0.1 (legacy)" }], (v) => save({ engine: v }), "Engine")),
 			h("p", { class: "hint" }, "Shortcuts: ? quick · ?? deep research · ↑ last prompt · Ctrl+E reading view (click ⤢ again for evidence) · Ctrl+Shift+C copy · 1–9 open a source · Ctrl+L new task · Esc takes over"),
 			h("p", { class: "hint" }, `midnight.app ${S.version} · engine ${S.engine} · ${S.dataDir}`),
 		);

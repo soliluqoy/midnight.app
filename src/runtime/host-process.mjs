@@ -91,7 +91,7 @@ port.on("message", async ({ data: m }) => {
 	}
 });
 
-// ---- model accounts (same flows as the 0.1 engine, now inside the host) ----
+// ---- model accounts ----
 let loginAbort;
 const promptWaiters = new Map();
 async function auth(op, a) {

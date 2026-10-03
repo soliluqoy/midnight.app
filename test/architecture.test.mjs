@@ -14,7 +14,7 @@ const files = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) 
 const imports = (f) => [...fs.readFileSync(f, "utf8").matchAll(/(?:^|\n)\s*import\s[^;]*?from\s+"([^"]+)"|import\("([^"]+)"\)/g)].map((m) => m[1] ?? m[2]);
 const rel = (f) => path.relative(src, f).replace(/\\/g, "/");
 const ENGINE = ["contracts", "storage", "policy", "missions", "scheduler", "memory", "evidence", "skills", "resources", "connectors", "windows", "runtime", "tools/documents"];
-const all = files(src).filter((f) => !rel(f).startsWith("legacy/"));
+const all = files(src);
 
 test("contracts depend on nothing else in Midnight", () => {
 	for (const f of all.filter((x) => rel(x).startsWith("contracts/"))) {

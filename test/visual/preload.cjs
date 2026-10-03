@@ -106,7 +106,7 @@ const snapshot = () => ({
 	watching: { count: 1, next: t(30) },
 });
 const settings = {
-	settings: { corner: "right", textSize: 1, highContrast: false, reducedMotion: true, autoExpand: false, hotkey: "CommandOrControl+Alt+M", mode: "ask", privacy: "cloud", onboarded: true, thinking: "low", answerLength: "normal", computerUse: "ask", shareContext: true, launchAtLogin: false, instructions: "", searchEngine: "google", fastPages: true, local: { enabled: false }, quietHours: { enabled: true, from: "22:00", to: "07:00" }, budget: { costUsd: 2 }, profile: "balanced", engine: "mission", demoConnectors: false },
+	settings: { corner: "right", textSize: 1, highContrast: false, reducedMotion: true, autoExpand: false, hotkey: "CommandOrControl+Alt+M", mode: "ask", privacy: "cloud", onboarded: true, thinking: "low", answerLength: "normal", computerUse: "ask", shareContext: true, launchAtLogin: false, instructions: "", searchEngine: "google", fastPages: true, local: { enabled: false }, quietHours: { enabled: true, from: "22:00", to: "07:00" }, budget: { costUsd: 2 }, profile: "balanced", demoConnectors: false },
 	accounts: [{ id: "anthropic", name: "Anthropic", oauth: true, apiKey: true, configured: true, source: "stored" }],
 	models: [{ provider: "anthropic", providerName: "Anthropic", id: "claude-fable-5-1", name: "Claude Fable 5.1", vision: true }],
 	current: { provider: "anthropic", model: "claude-fable-5-1" },

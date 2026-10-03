@@ -4,8 +4,8 @@ Plan: `Midnight autonomous rework plan.pdf` (backlog IDs from ch. 21). Updated 2
 
 ## Where it stands
 
-The mission engine is built and wired into the app. `npm start` now runs it; the 0.1 engine remains behind
-`engine: "legacy"` in Settings → Data (or `MIDNIGHT_ENGINE=legacy`).
+The mission engine is built and wired into the app and is the only engine: the 0.1 engine (`src/legacy/`), its
+Settings switch and the v1 settings import have been removed.
 
 Verification: `npm test` 52/52 (unit, real-Pi end-to-end with the faux model, crash recovery, adversarial,
 architecture/provenance guards) · `npm run test:smoke` (real Electron, engine in its utility process, 0 renderer errors)
@@ -49,7 +49,7 @@ architecture/provenance guards) · `npm run test:smoke` (real Electron, engine i
 8. **Accessibility audit:** screen reader pass, 100–200% DPI, multi-monitor, high contrast on the new cards.
 9. **Release engineering:** code-signing certificate in CI secrets, staged rollout, runbooks in `docs/runbooks/`
    (stop all input, disable writes, revoke, restore backup, support bundle, uninstall with data choice).
-10. **Retire legacy** after a support window: delete `src/legacy/`.
+10. ~~Retire legacy~~ done: `src/legacy/` deleted.
 11. **P2/P3** (morning runway, promise board, show-me, voice, night gardener) only after the beta gates pass.
 
 ## Known limits (be honest about these)

@@ -18,12 +18,7 @@ import { createScreenLease } from "./windows/lease.mjs";
 if (process.env.MIDNIGHT_USER_DATA) app.setPath("userData", path.resolve(process.env.MIDNIGHT_USER_DATA));
 const settings = loadSettings();
 
-// Rollback path (plan ch. 19): the 0.1 engine stays available behind a flag until the mission engine is adopted.
-if (process.env.MIDNIGHT_ENGINE === "legacy" || settings.get().engine === "legacy") {
-	await import("./legacy/main.mjs");
-} else {
-	startMissionShell();
-}
+startMissionShell();
 
 function startMissionShell() {
 	// Capsule sizes in CSS px. The renderer gets them through `ui.dims` (as CSS variables), so this is the one source.
@@ -323,7 +318,6 @@ function startMissionShell() {
 				toCapsule({ kind: "shell", type: "relayout" });
 			}
 			supervisor.settings(hostSettings(after));
-			if (after.engine !== before.engine) error = error || "Restart midnight to switch engines.";
 			toCapsule({ kind: "shell", type: "settings", settings: after });
 			const current = await supervisor.auth("current").catch(() => ({ provider: "", model: "" }));
 			toCapsule({ kind: "shell", type: "model", ...current });
