@@ -1,13 +1,13 @@
 # Autonomous rework · status and continuation plan
 
-Plan: `Midnight autonomous rework plan.pdf` (backlog IDs from ch. 21). Updated 2026-10-04. Nothing is committed yet.
+Plan: `Midnight autonomous rework plan.pdf` (backlog IDs from ch. 21). Updated 2026-10-04. Committed on branch `rework/mission-engine` (not pushed).
 
 ## Where it stands
 
 The mission engine is built and wired into the app. `npm start` now runs it; the 0.1 engine remains behind
 `engine: "legacy"` in Settings → Data (or `MIDNIGHT_ENGINE=legacy`).
 
-Verification: `npm test` 47/47 (unit, real-Pi end-to-end with the faux model, crash recovery, adversarial,
+Verification: `npm test` 50/50 (unit, real-Pi end-to-end with the faux model, crash recovery, adversarial,
 architecture/provenance guards) · `npm run test:smoke` (real Electron, engine in its utility process, 0 renderer errors)
 · `npm run test:visual` (11 capsule states vs baselines) · idle trace in `docs/performance.md`.
 
@@ -24,19 +24,21 @@ architecture/provenance guards) · `npm run test:smoke` (real Electron, engine i
 | S01–S04 recurrence (DST), watches, rules editor, attention/quiet hours | ✓ | `src/scheduler` |
 | M01 model routing, local endpoint, no cloud fallback | ✓ | `src/runtime/models.mjs` |
 | K01–K02 memory, skill packs, recipes | ✓ | `src/memory`, `src/skills` |
-| Q01 adversarial corpus · Q02 holdout (51 scenarios, runner) · Q03 idle trace | ✓ / runner not yet run / partial | `test/adversarial.test.mjs`, `evals/` |
+| Q01 adversarial corpus · Q02 holdout (51 scenarios, runner, headless web) · Q03 idle trace | ✓ / runner not yet run / partial | `test/adversarial.test.mjs`, `evals/`, `src/tools/web-headless.mjs` |
 | D01–D03 NSIS + updater (verify sha512 + signature), export/delete, diagnostics | ✓ code; signing needs a certificate | `src/desktop/updater.mjs`, `src/storage/data.mjs` |
 
 ## Continuation plan (in order)
 
 1. **You, once:** open the app (`npm start`), check Settings → Accounts shows your providers signed in (credentials
    are read from `~/.midnight.server/agent`), run one real question and one task, and look at the capsule.
-2. **Commit** on a branch (`rework/mission-engine`) in reviewable slices: deps/ADRs → core → shell/UI → tests/docs.
-   Leave `AGENTS.md`, `reports/`, `research_notes/` as they are.
+2. ~~Commit on a branch~~ done: four slices on `rework/mission-engine` plus follow-ups. `AGENTS.md`, `reports/`,
+   `research_notes/` stay untracked.
 3. **Real-model evaluation:** `node evals/run.mjs --model <provider/id> --repeat 3`; fix prompts/tools until the
    predeclared threshold holds with zero critical violations. Record results under `evals/results/`.
-4. **Headless web in evals:** give the eval runner a web worker (plain `fetch` path of `src/tools/web.mjs` without
-   Electron) so research scenarios measure something real.
+4. ~~Headless web in evals~~ done: `src/tools/web-headless.mjs` (plain fetch; DuckDuckGo then Bing result pages,
+   regex article extraction in `src/tools/web-text.mjs`) backs `tool.search`, `tool.read_pages` and `fetch.page` in
+   the runner. `--no-web` turns it off. Script-rendered pages come back short; browser and desktop scenarios still
+   report what they could not do.
 5. **First real connectors (decision needed):** pick one CRM and one mail provider used by real users (plan ch. 24);
    implement against `src/connectors/registry.mjs` with OAuth via the vault; keep the demo connectors for failure tests.
 6. **MCP/Codemode:** wire `createMcpExtension` behind the broker gate with reviewed-server pinning and tool-schema

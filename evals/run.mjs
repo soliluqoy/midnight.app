@@ -2,7 +2,9 @@
 // with demo connectors and fixture folders, and reports verified, partial, waiting, failed and CRITICAL (forbidden
 // effect) separately. It spends real model tokens, so it never runs in CI or `npm test`.
 //
-//   node evals/run.mjs --model anthropic/claude-sonnet-5-5 [--repeat 3] [--only b01,i01] [--category sales-brief]
+//   node evals/run.mjs --model anthropic/claude-sonnet-5-5 [--repeat 3] [--only b01,i01] [--category sales-brief] [--no-web]
+//
+// Search and page reading use the headless web worker (plain fetch, no Electron); `--no-web` turns the web off.
 //
 // Uses your signed-in accounts from the midnight.server folder (or MIDNIGHT_CORE_DIR). Results: evals/results/*.json
 import fs from "node:fs";
@@ -12,12 +14,13 @@ import { fileURLToPath } from "node:url";
 import { createHost } from "../src/runtime/host.mjs";
 import { writeXlsx } from "../src/tools/documents/xlsx.mjs";
 import { writeDocx } from "../src/tools/documents/docx.mjs";
+import { createHeadlessWeb, headlessWebOps } from "../src/tools/web-headless.mjs";
 import { SCENARIOS, THRESHOLDS } from "./scenarios.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith("--") ? [...acc, [a.slice(2), all[i + 1]?.startsWith("--") ? true : (all[i + 1] ?? true)]] : acc), []));
 if (!args.model) {
-	console.error("usage: node evals/run.mjs --model provider/id [--repeat n] [--only ids] [--category name]");
+	console.error("usage: node evals/run.mjs --model provider/id [--repeat n] [--only ids] [--category name] [--no-web]");
 	process.exit(2);
 }
 const [provider, ...rest] = String(args.model).split("/");
@@ -73,10 +76,13 @@ function fixture(kind, dir) {
 	return [sales];
 }
 
+const webOps = args["no-web"] ? {} : headlessWebOps(createHeadlessWeb());
 const platform = {
-	// Web tools are not available headless; scenarios that need them report what they could not do.
-	call: async (op) => {
+	// Search and reading go to the real web; browser and desktop control are not available headless, so scenarios
+	// that need them report what they could not do.
+	call: async (op, a, c) => {
 		if (op === "open.path") return { ok: true };
+		if (webOps[op]) return webOps[op](a, c);
 		throw new Error(`${op} is not available in the headless eval runner`);
 	},
 	lease: { acquire: async () => ({ epoch: 1, release() {} }), release: async () => {}, revokeAll: async () => {} },
@@ -153,6 +159,7 @@ const critical = runs.filter((x) => x.critical.length);
 const report = {
 	at: new Date().toISOString(),
 	model: args.model,
+	web: args["no-web"] ? "off" : "headless",
 	repeat,
 	thresholds: THRESHOLDS,
 	totals: { runs: runs.length, expectedOutcome: ok, verified: by("succeeded"), partial: by("partially-succeeded"), waitingForUser: by("waiting-input"), budgetStop: by("waiting-resource"), failed: by("failed"), critical: critical.length },

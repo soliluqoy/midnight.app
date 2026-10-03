@@ -1,6 +1,7 @@
 import { BrowserWindow, session as electronSession } from "electron";
 import { READ_PAGES, SEARCH } from "./schemas.mjs";
 import { dedupeSearchRuns } from "../harness-utils.mjs";
+import { focus } from "./web-text.mjs";
 
 // Fast, text-only web access: search results as data and parallel page reading in a small pool of hidden
 // windows, with images, media, fonts and trackers blocked. The interactive `browser` tool stays for clicking.
@@ -108,41 +109,6 @@ const SERP = {
     })()`,
 	},
 };
-
-// Keep the passages that match the query, in page order, within the budget.
-function focus(text, query, budget) {
-	if (text.length <= budget) return text;
-	const paras = text.split(/\n{2,}/);
-	const terms = (query ?? "")
-		.toLowerCase()
-		.split(/[^\p{L}\p{N}]+/u)
-		.filter((w) => w.length > 2);
-	if (!terms.length) return `${text.slice(0, budget)}\n[… trimmed ${text.length - budget} chars]`;
-	const scored = paras.map((p, i) => {
-		const l = p.toLowerCase();
-		let s = i < 3 ? 2 : 0; // the opening usually frames the page
-		for (const t of terms) if (l.includes(t)) s += 1 + Math.min(3, l.split(t).length - 2) * 0.3;
-		if (/^#/.test(p)) s += 0.5;
-		return { i, p, s };
-	});
-	const keep = new Set();
-	let used = 0;
-	for (const x of [...scored].sort((a, b) => b.s - a.s || a.i - b.i)) {
-		if (x.s <= 0 && used > budget * 0.5) break;
-		if (used + x.p.length > budget) continue;
-		keep.add(x.i);
-		used += x.p.length + 2;
-	}
-	let prev = -1;
-	const parts = [];
-	for (const x of scored) {
-		if (!keep.has(x.i)) continue;
-		if (x.i !== prev + 1 && parts.length) parts.push("[…]");
-		parts.push(x.p);
-		prev = x.i;
-	}
-	return parts.join("\n\n");
-}
 
 export function createWeb(settings) {
 	const ses = electronSession.fromPartition(PARTITION);
