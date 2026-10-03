@@ -116,10 +116,18 @@ function startMissionShell() {
 	}
 
 	function summon() {
-		if (!capsule) return;
+		if (!capsule || capsule.isDestroyed()) return;
+		const hidden = !capsule.isVisible();
 		if (!capsule.isFocused()) noteForeground(); // where the user was, before the capsule takes focus
 		capsule.showInactive();
+		if (hidden && lastSize !== "idle") {
+			capsule.focus();
+			return;
+		}
 		toCapsule({ kind: "shell", type: "summon" });
+	}
+	function hideCapsule() {
+		if (capsule && !capsule.isDestroyed()) capsule.hide();
 	}
 	function openSettings() {
 		capsule.showInactive();
@@ -209,13 +217,25 @@ function startMissionShell() {
 		capsule.webContents.on("will-navigate", (e) => e.preventDefault()); // the capsule never leaves its page
 		capsule.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 		capsule.webContents.on("render-process-gone", () => setTimeout(() => !capsule.isDestroyed() && capsule.reload(), 500));
+		capsule.webContents.on("before-input-event", (e, input) => {
+			const modifier = process.platform === "darwin" ? input.meta && !input.control : input.control && !input.meta;
+			if (input.type === "keyDown" && modifier && !input.alt && !input.shift && input.key.toLowerCase() === "h") {
+				e.preventDefault();
+				hideCapsule();
+			}
+		});
 		capsule.webContents.on("context-menu", (_e, p) => {
 			const items = p.isEditable
 				? [{ role: "cut", enabled: p.editFlags.canCut }, { role: "copy", enabled: p.editFlags.canCopy }, { role: "paste", enabled: p.editFlags.canPaste }, { type: "separator" }, { role: "selectAll" }]
 				: p.selectionText
 					? [{ role: "copy" }]
 					: [];
-			if (items.length) Menu.buildFromTemplate(items).popup({ window: capsule });
+			if (items.length) items.push({ type: "separator" });
+			items.push(
+				{ label: "Hide capsule", accelerator: "CommandOrControl+H", registerAccelerator: false, click: hideCapsule },
+				{ label: `Show again: ${(hotkey || settings.get().hotkey).replace("CommandOrControl", process.platform === "darwin" ? "Cmd" : "Ctrl")}`, enabled: false },
+			);
+			Menu.buildFromTemplate(items).popup({ window: capsule });
 		});
 		capsule.loadFile(dir("./ui/index.html"));
 
@@ -285,7 +305,7 @@ function startMissionShell() {
 	const shellMethods = {
 		"ui.size": ({ state }) => place(state),
 		"ui.dims": () => dims(),
-		"ui.focus": () => capsule.focus(),
+		"ui.focus": () => capsule.isVisible() && capsule.focus(),
 		"ui.textSize": ({ z }) => {
 			settings.set({ textSize: z });
 			applyZoom();
