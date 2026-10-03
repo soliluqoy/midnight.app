@@ -8,6 +8,9 @@ export const LOCAL_PROVIDER = "local";
 // Luna when the catalog has it, then the older default, then any capable vision model.
 const PREFERRED = "gpt-6-luna";
 const FALLBACK = "gpt-5.5";
+// Tasks (plans, computer use, research) go to a stronger model when the chosen one is the fast default.
+const STRONG = "gpt-6.1-sol";
+const isOpenAI = (m) => m.provider === "openai" || m.provider === "openai-codex";
 
 export class NoLocalModelError extends Error {}
 export class NoModelError extends Error {}
@@ -51,20 +54,31 @@ export function registerLocalEndpoint(modelRuntime, local) {
 
 /**
  * Pick the model for one mission run.
- * @param {{ provider?: string, model?: string, local?: object }} settings
+ * @param {{ provider?: string, model?: string, taskModel?: string, local?: object }} settings
  * @param {"cloud"|"local"|"offline"} privacy
+ * @param {"task"|"quick"} kind  quick answers ("?") use the chosen model; everything else may use the task model
  */
-export async function routeModel(modelRuntime, settings, privacy = "cloud") {
+export async function routeModel(modelRuntime, settings, privacy = "cloud", kind = "task") {
 	if (privacy === "local" || privacy === "offline") {
 		const m = settings.local?.enabled && settings.local.model ? modelRuntime.getModel(LOCAL_PROVIDER, settings.local.model) : undefined;
 		if (!m) throw new NoLocalModelError("This mission is set to use only a local model, and none is set up. Add one in Settings → Models, or run the mission with a cloud model.");
 		return { model: m, route: { provider: m.provider, model: m.id, privacy, reason: "privacy requires a local model" } };
 	}
-	const want = settings.provider && settings.model ? modelRuntime.getModel(settings.provider, settings.model) : undefined;
 	// getAvailable() checks credentials now; hasConfiguredAuth() is a snapshot refreshed in the background.
 	const avail = await modelRuntime.getAvailable();
-	const usable = want && (isLocal(want) || avail.some((m) => m.provider === want.provider && m.id === want.id) || !!(await modelRuntime.checkAuth?.(want.provider).catch(() => undefined)));
-	if (usable) return { model: want, route: { provider: want.provider, model: want.id, privacy, reason: "your choice" } };
+	const usable = async (m) => !!m && (isLocal(m) || avail.some((x) => x.provider === m.provider && x.id === m.id) || !!(await modelRuntime.checkAuth?.(m.provider).catch(() => undefined)));
+	const want = settings.provider && settings.model ? modelRuntime.getModel(settings.provider, settings.model) : undefined;
+	if (kind === "task") {
+		const [tp, ...tid] = (settings.taskModel ?? "").split("|");
+		const task = tp && tid.length ? modelRuntime.getModel(tp, tid.join("|")) : undefined;
+		if (await usable(task)) return { model: task, route: { provider: task.provider, model: task.id, privacy, reason: "your task model" } };
+		// automatic: only upgrade from the fast default, never override a different model the user picked on purpose
+		if (!settings.taskModel && (!want || want.id === PREFERRED)) {
+			const strong = avail.find((m) => isOpenAI(m) && m.id === STRONG && (!want || m.provider === want.provider)) ?? avail.find((m) => isOpenAI(m) && m.id === STRONG);
+			if (strong) return { model: strong, route: { provider: strong.provider, model: strong.id, privacy, reason: "stronger model for tasks" } };
+		}
+	}
+	if (await usable(want)) return { model: want, route: { provider: want.provider, model: want.id, privacy, reason: "your choice" } };
 	const m = chooseDefaultModel(avail.length ? avail : await modelRuntime.getAvailable());
 	if (!m) throw new NoModelError("No model available. Open Settings and sign in to a provider, or set up a local model.");
 	return { model: m, route: { provider: m.provider, model: m.id, privacy, reason: "best available" } };

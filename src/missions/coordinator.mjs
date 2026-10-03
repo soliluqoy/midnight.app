@@ -88,7 +88,7 @@ export function createCoordinator(d) {
 		const st = settings();
 		let route;
 		try {
-			route = await routeModel(runtime.modelRuntime, st, m.privacy);
+			route = await routeModel(runtime.modelRuntime, st, m.privacy, labelFor(m.goal) === "QUICK ANSWER" ? "quick" : "task");
 		} catch (err) {
 			commit(() => {
 				clearPending(missionId);
@@ -133,6 +133,7 @@ export function createCoordinator(d) {
 	function buildInput(p) {
 		let t = p.resume ? p.input : expandPrompt(p.input);
 		if (p.context) t += `\n\n[Context: ${p.context}]`;
+		if (p.unfinished) t += `\n\n[Midnight: this mission is not finished. Missing: ${p.unfinished}. If the message is about that, do the missing part now.]`;
 		return t;
 	}
 
@@ -292,7 +293,9 @@ export function createCoordinator(d) {
 		if (!m) throw new Error("no such mission");
 		if (runtime.isRunning(missionId)) return steer(missionId, input);
 		if (m.status === "waiting-input" && m.waiting?.question) return answer(missionId, m.waiting.question.id, input);
-		enqueue(missionId, { input, requestId, context, followUp: true });
+		// The model does not see Midnight's checks; tell it what is still missing so a nudge leads to work, not an apology.
+		const unfinished = ["partially-succeeded", "failed"].includes(m.status) && m.outcome?.summary ? m.outcome.summary : undefined;
+		enqueue(missionId, { input, requestId, context, followUp: true, unfinished });
 		return { queued: true };
 	}
 	async function steer(missionId, input) {

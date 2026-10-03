@@ -146,3 +146,27 @@ test("an interrupted read is retried safely after a crash", async () => {
 	assert.equal(m.status, "succeeded");
 	await h2.close();
 });
+
+test("a follow-up on an unfinished mission tells the model what is still missing", async () => {
+	const model = await makeModel();
+	const { host } = await startHost({ model });
+	let followUpText = "";
+	model.faux.setResponses([
+		call("plan", { summary: "Chart it", steps: [{ title: "Make the chart" }], checks: [{ kind: "artifact", type: "chart" }] }),
+		fauxAssistantMessage([fauxText("Done.")]),
+		(ctx) => {
+			const last = ctx.messages.filter((m) => m.role === "user").at(-1);
+			followUpText = typeof last.content === "string" ? last.content : last.content.map((c) => c.text ?? "").join("");
+			return fauxAssistantMessage([fauxText("Making it now.")]);
+		},
+	]);
+	const { missionId } = await host.handle("mission.create", { text: "Make a chart of nothing", requestId: "fu-1" });
+	const m = await settled(host, missionId);
+	assert.notEqual(m.status, "succeeded");
+	await host.handle("mission.followUp", { missionId, text: "where is the chart?", requestId: "fu-2" });
+	await until(() => followUpText);
+	assert.match(followUpText, /^where is the chart\?/);
+	assert.match(followUpText, /\[Midnight: this mission is not finished\. Missing: A validated artifact was produced: no artifact was produced. .*do the missing part now\.\]/i);
+	await settled(host, missionId);
+	await host.close();
+});

@@ -191,7 +191,17 @@
 		return sec(
 			"model",
 			"MODELS AND PRIVACY",
-			field("Model", "", sel),
+			field("Model", "Quick answers (start with ?) and the default for everything else", sel),
+			field(
+				"Task model",
+				"Plans, computer use and research",
+				dropdown({
+					label: "Task model",
+					value: st.taskModel ?? "",
+					groups: [{ items: [{ value: "", label: "Automatic", hint: "stronger model when available" }] }, ...[...groups].map(([name, list]) => ({ label: name, items: list.filter((m) => !m.local).map((m) => ({ value: `${m.provider}|${m.id}`, label: m.name, hint: m.vision ? "" : "no vision" })) }))],
+					onPick: (v) => save({ taskModel: v }),
+				}),
+			),
 			cur && !cur.vision ? h("p", { class: "hint warn" }, "This model can't see images, so browser and screen screenshots won't work.") : null,
 			field(
 				"Thinking",

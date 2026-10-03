@@ -9,6 +9,7 @@ export const DEFAULTS = {
 	engine: "mission", // mission | legacy (the 0.1 engine, kept for rollback)
 	provider: "", // "" = choose automatically from what you are signed in to
 	model: "",
+	taskModel: "", // "provider|id" for plans, computer use and research; "" = a stronger model when "model" is the fast default
 	thinking: "low", // off | low | medium | high
 	computerUse: "ask", // ask = allowed once a plan that needs it is approved | never
 	hotkey: "CommandOrControl+Alt+M",
@@ -105,6 +106,7 @@ export function loadSettings() {
 export const hostSettings = (s) => ({
 	provider: s.provider,
 	model: s.model,
+	taskModel: s.taskModel,
 	thinking: s.thinking,
 	answerLength: s.answerLength,
 	instructions: s.instructions,
