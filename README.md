@@ -27,7 +27,7 @@ The core packages are vendored as tarballs in `vendor/`. After changing `../midn
 
 ## Features
 
-- **Capsule:** resting pill → `Ctrl+Alt+M` → ask box → mission card (steps, live log, approvals, streaming answer, receipts). Tray icon to quit.
+- **Capsule:** resting pill → `Ctrl+Alt+M` → ask box → mission card (steps, live log, approvals, streaming answer, receipts). Right-click → **Hide capsule**, or `Ctrl+H` while focused (`Cmd+H` on macOS), hides it while work continues. Use the summon shortcut or click the tray icon to show it again. Tray icon to quit.
 - **Answers:** stream in live as Markdown (lists, tables, code) with clickable `[n]` citations tied to a Sources list. Finished answers take the whole card; `≡` brings back the log. Ask follow-ups in the same thread; *Copy* (`Ctrl+Shift+C`) copies the Markdown; `1`–`9` open a source; `Ctrl+L` starts over.
 - **Reading:** text size S…3X (`Ctrl +` / `Ctrl −` / `Ctrl 0`, or Settings) scales the whole capsule and it stays on screen; `⤢` / `Ctrl+E` opens a wide reading view (automatic for long answers); high-contrast mode; answer length brief / normal / detailed.
 - **Web, fast:** `search` returns results as text (Google, falling back to Bing / DuckDuckGo when blocked; several queries in parallel) and `read_pages` reads up to 8 pages at once in a pool of hidden windows, main content only, trimmed to the passages matching the question. Images, media, fonts and trackers are blocked there, and pages/results are cached for 30 minutes. Prefix `?` for a quick answer, `??` for deep research. When you open the ask box with a link or long text on the clipboard, a chip offers to summarize it.
