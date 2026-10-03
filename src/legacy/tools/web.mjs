@@ -1,5 +1,5 @@
 import { BrowserWindow, session as electronSession } from "electron";
-import { READ_PAGES, SEARCH } from "./schemas.mjs";
+import { Type } from "typebox";
 import { dedupeSearchRuns } from "../harness-utils.mjs";
 
 // Fast, text-only web access: search results as data and parallel page reading in a small pool of hidden
@@ -369,7 +369,15 @@ export function createWeb(settings) {
 	const text = (t, details = {}) => ({ content: [{ type: "text", text: t }], details });
 
 	const searchTool = {
-		...SEARCH,
+		name: "search",
+		label: "Search",
+		description:
+			"Web search. Returns the top results (title, URL, snippet) as text in about a second, plus the engine's direct answer if it shows one. " +
+			"Pass several queries at once to cover different angles; they run in parallel.",
+		promptSnippet: "search: fast web search; returns titles, URLs and snippets (no screenshots)",
+		parameters: Type.Object({
+			queries: Type.Array(Type.String(), { description: "1-4 search queries", minItems: 1, maxItems: 4 }),
+		}),
 		async execute(_id, p, signal) {
 			const engine = settings.get().searchEngine;
 			const runs = dedupeSearchRuns(
@@ -395,7 +403,16 @@ export function createWeb(settings) {
 	};
 
 	const readTool = {
-		...READ_PAGES,
+		name: "read_pages",
+		label: "Read pages",
+		description:
+			"Read the main text of 1-8 web pages at once (they load in parallel, text only, no screenshots). " +
+			"Pass the user's question as `query` so long pages are trimmed to the relevant passages. Much faster than the browser tool.",
+		promptSnippet: "read_pages: read several URLs in parallel as clean text",
+		parameters: Type.Object({
+			urls: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }),
+			query: Type.Optional(Type.String({ description: "What you are looking for; focuses long pages" })),
+		}),
 		async execute(_id, p, signal) {
 			const urls = [...new Set(p.urls.slice(0, 8).map((u) => (/^[a-z]+:\/\//i.test(u) ? u : `https://${u}`)))];
 			const budget = Math.max(3000, Math.floor((PAGE_CHARS * 5) / Math.max(5, urls.length)) + (urls.length <= 2 ? 6000 : 0));
@@ -413,11 +430,7 @@ export function createWeb(settings) {
 				const body = focus(pg.text || pg.desc || "", p.query, budget);
 				return `[${i + 1}] ${pg.title}\n${pg.url}\n\n${body || "(no readable text; try the browser tool)"}`;
 			});
-			return text(out.join("\n\n---\n\n"), {
-				urls: pages.map((pg) => pg.url),
-				// what was actually read, for evidence: failed loads are not evidence
-				pages: pages.filter((pg) => pg.ok).map((pg) => ({ url: pg.url, title: pg.title, excerpt: focus(pg.text || pg.desc || "", p.query, 600) })),
-			});
+			return text(out.join("\n\n---\n\n"), { urls: pages.map((pg) => pg.url) });
 		},
 	};
 

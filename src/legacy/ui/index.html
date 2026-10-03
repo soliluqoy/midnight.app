@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
+<title>midnight.server</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="cap" data-s="idle" data-m="idle" data-f="none">
+  <!-- resting pill -->
+  <div class="lay l-idle" id="l-idle">
+    <i class="dot"></i><strong>midnight.server</strong><span class="st" id="idleSt">idle</span>
+  </div>
+
+  <!-- ask for work -->
+  <div class="lay l-chat" id="l-chat">
+    <div class="row"><i class="dot"></i><strong>midnight.server</strong><button class="chip" id="chipModel" title="Change model">model</button><span class="mono" id="hint">Ctrl+Alt+M · Esc closes</span><button class="chip clip" id="chipClip" hidden></button><button class="ib" id="gearChat" title="Settings">⚙</button></div>
+    <textarea id="box" class="inp" rows="2" placeholder="Ask or give a task…   ? quick · ?? deep · ↑ last"></textarea>
+  </div>
+
+  <!-- mission -->
+  <div class="lay l-mission" id="l-mission">
+    <div class="mh">
+      <i class="dot"></i>
+      <div class="t"><small id="mLabel">MISSION</small><b id="mTitle">New mission</b></div>
+      <span class="time" id="mTime">0:00</span>
+      <button class="ib" id="gearMission" title="Settings">⚙</button>
+      <button class="ib" id="bLog" title="Show the activity log">≡</button>
+      <button class="ib" id="bPeek" title="Show the background browser">◫</button>
+      <button class="ib" id="bRead" title="Reading view (Ctrl+E)">⤢</button>
+      <button class="ib" id="bMin" title="Tuck away (keeps working)">—</button>
+    </div>
+    <div class="mp"><small>YOU ASKED</small><span id="prompt"></span></div>
+    <ul class="steps" id="steps"></ul>
+    <div class="conn"><span id="cBrowser" title="midnight's background web tools">web</span><span id="cYours" title="your own browser">your browser</span><span id="cDesk" title="mouse and keyboard on your desktop">desktop</span></div>
+    <div class="feed" id="feed"></div>
+    <div class="ans" id="ans" hidden></div>
+    <div class="foot">
+      <div class="f-plan" id="fPlan">
+        <span class="mono" id="planNote"></span>
+        <button class="pb" id="planNo">Cancel</button><button class="pb pri" id="planYes">Approve plan</button>
+      </div>
+      <div class="f-run" id="fRun">
+        <span class="mono">working · <b>Esc</b> to take over</span>
+        <button class="pb warm" id="stop">Take over</button>
+      </div>
+      <div class="f-ask" id="fAsk">
+        <h5><i>!</i><span id="askTitle"></span></h5>
+        <p id="askDetail"></p>
+        <div class="row"><span class="mono">this action waits for your answer</span>
+          <button class="pb" id="askNo">Decline</button><button class="pb pri" id="askYes">Approve</button></div>
+      </div>
+      <div class="f-done" id="fDone">
+        <div class="row"><h5 id="doneH">Done</h5><div class="rc" id="receipts"></div></div>
+        <p id="doneText"></p>
+        <textarea id="reply" class="inp reply" rows="1" placeholder="Ask a follow-up…  (Enter)"></textarea>
+        <div class="row"><span class="mono" id="doneSub"></span><button class="pb" id="copy" title="Copy answer (Ctrl+Shift+C)">Copy</button><button class="pb pri" id="again" title="Ctrl+L">New task</button></div>
+      </div>
+      <div class="f-login" id="fLogin">
+        <span class="mono" id="loginNote">Sign in to an AI provider to start.</span>
+        <button class="pb pri" id="login">Open settings</button>
+      </div>
+    </div>
+  </div>
+  <!-- settings -->
+  <div class="lay l-settings" id="l-settings"></div>
+</div>
+<script src="md.js"></script>
+<script src="app.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

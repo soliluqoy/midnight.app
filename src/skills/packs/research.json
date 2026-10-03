@@ -1,0 +1,14 @@
+{
+	"id": "research",
+	"version": 1,
+	"title": "Cited research",
+	"purpose": "Answer a question from several current sources, citing only pages actually read.",
+	"inputs": ["question"],
+	"outputs": ["answer with sources"],
+	"capabilities": ["read.web", "compute"],
+	"tools": ["search", "read_pages", "calculate"],
+	"network": ["*"],
+	"resourceClass": "network-light",
+	"checks": [{ "kind": "answer" }, { "kind": "citations" }],
+	"prompt": "Search from 2-4 angles, read the best 4-8 pages in one read_pages call, compare them, note disagreements and dates. Cite only pages you read."
+}

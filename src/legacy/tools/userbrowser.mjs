@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { shell } from "electron";
-import { USER_BROWSER } from "./schemas.mjs";
+import { Type } from "typebox";
 import { BROWSERS, browserUrl, lastForeground, listWindows, normalizeUrl } from "./computer.mjs";
 
 // The user's own browser (their default: Chrome, Edge, Firefox…): read which page they are on, open pages there.
@@ -82,7 +82,20 @@ const looksWalled = (t) =>
 
 export function userBrowserTool(web) {
 	return {
-		...USER_BROWSER,
+		name: "user_browser",
+		label: "Your browser",
+		description:
+			"The user's own default browser (with their logins and open tabs). `status`: default browser, open browser windows and which page " +
+			"the user was on. `current_page`: read the page in the user's active tab (URL from the address bar, text loaded in the background, " +
+			"without their cookies). `open`: open URLs in the user's browser for them to see. Never clicks or types; driving the user's browser " +
+			"is computer use.",
+		promptSnippet: "user_browser: see/read the page the user has open in their own browser, or open pages there",
+		parameters: Type.Object({
+			action: Type.Union([Type.Literal("status"), Type.Literal("current_page"), Type.Literal("open")]),
+			urls: Type.Optional(Type.Array(Type.String(), { maxItems: 5, description: "open: URLs to open, each in a new tab" })),
+			window: Type.Optional(Type.String({ description: "current_page: window handle or title part, if not the most recent one" })),
+			query: Type.Optional(Type.String({ description: "current_page: what you are looking for; focuses long pages" })),
+		}),
 		async execute(_id, p, signal) {
 			const text = (t, details = {}) => ({ content: [{ type: "text", text: t }], details: { action: p.action, ...details } });
 			switch (p.action) {
@@ -118,7 +131,7 @@ export function userBrowserTool(web) {
 						: "";
 					return text(
 						`${pretty(w.proc)} tab: ${w.title}\n${pg.url}\n\n${pg.text || pg.error || "(no readable text)"}${tip}`,
-						{ urls: [pg.url], pages: pg.text ? [{ url: pg.url, title: pg.title ?? w.title, excerpt: pg.text.slice(0, 600) }] : [] },
+						{ urls: [pg.url] },
 					);
 				}
 				case "open": {

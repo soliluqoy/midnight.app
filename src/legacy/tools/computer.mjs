@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { desktopCapturer, screen, shell } from "electron";
 import { fileURLToPath } from "node:url";
-import { COMPUTER } from "./schemas.mjs";
+import { Type } from "typebox";
 
 const HELPER = fileURLToPath(new URL("./input-helper.ps1", import.meta.url));
 const MAX_W = 1568;
@@ -15,7 +15,7 @@ let buf = "";
 
 function helper() {
 	if (proc) return proc;
-	proc = spawn("powershell.exe", ["-NoProfile", "-NoLogo", "-MTA", "-ExecutionPolicy", "Bypass", "-File", HELPER], {
+	proc = spawn("powershell.exe", ["-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-File", HELPER], {
 		stdio: ["pipe", "pipe", "ignore"],
 		windowsHide: true,
 	});
@@ -71,21 +71,6 @@ function call(op, args = {}, timeout = 8000) {
 
 export function stopComputer() {
 	proc?.kill();
-}
-/** Fencing: the helper accepts input only under the armed lease epoch (see windows/lease.mjs). */
-export const armHelper = (epoch) => call("arm", { epoch }, 15000);
-export const disarmHelper = () => (proc ? call("disarm", {}, 3000).catch(() => proc?.kill()) : Promise.resolve());
-
-// What the latest element list said about each control, so the shell can describe a click before it happens.
-const lastElements = new Map();
-let lastElementsWindow;
-export function inspectComputer({ action, id, key }) {
-	if (action === "click_element" && id !== undefined) {
-		const e = lastElements.get(id);
-		return { label: e?.n ?? "", role: e?.t ?? "", window: lastElementsWindow?.title ?? "" };
-	}
-	if (action === "key") return { label: key ?? "", window: lastElementsWindow?.title ?? "", commitContext: /^(ctrl\+)?enter$/i.test(key ?? "") && [...lastElements.values()].some((e) => e.focus && /edit|document/i.test(e.t ?? "")) };
-	return { window: lastElementsWindow?.title ?? "" };
 }
 export const warmHelper = () => call("ping", {}, 15000).catch(() => {});
 export const foreground = () => call("foreground");
@@ -145,13 +130,49 @@ async function zoom(x, y, w, h) {
 	return { data: img.toPNG().toString("base64"), rect, k };
 }
 
-const Params = COMPUTER.parameters;
-
+const Params = Type.Object({
+	action: Type.Union(
+		[
+			"screenshot",
+			"elements",
+			"read_text",
+			"click_element",
+			"set_value",
+			"click",
+			"double_click",
+			"right_click",
+			"move",
+			"drag",
+			"type",
+			"key",
+			"scroll",
+			"zoom",
+			"windows",
+			"focus_window",
+			"launch",
+			"wait",
+		].map((a) => Type.Literal(a)),
+		{ description: "What to do" },
+	),
+	x: Type.Optional(Type.Number({ description: "X in screenshot pixels (zoom: region left)" })),
+	y: Type.Optional(Type.Number({ description: "Y in screenshot pixels (zoom: region top)" })),
+	x2: Type.Optional(Type.Number({ description: "drag end X" })),
+	y2: Type.Optional(Type.Number({ description: "drag end Y" })),
+	w: Type.Optional(Type.Number({ description: "zoom region width in screenshot pixels" })),
+	h: Type.Optional(Type.Number({ description: "zoom region height in screenshot pixels" })),
+	id: Type.Optional(Type.Integer({ description: "element id from the latest `elements` list" })),
+	window: Type.Optional(Type.String({ description: "window handle (from `windows`) or part of its title / process name" })),
+	text: Type.Optional(Type.String({ description: "text for type / set_value" })),
+	key: Type.Optional(Type.String({ description: "key or combo for key, e.g. Enter, ctrl+c, ctrl+l, alt+f4, win" })),
+	dy: Type.Optional(Type.Number({ description: "scroll amount; positive = down (120 = one notch)" })),
+	dx: Type.Optional(Type.Number({ description: "horizontal scroll; positive = right" })),
+	target: Type.Optional(Type.String({ description: "launch: app name (notepad, excel, chrome), file path or URL" })),
+	seconds: Type.Optional(Type.Number({ description: "seconds for wait (max 10)" })),
+	screenshot: Type.Optional(Type.Boolean({ description: "false skips the screenshot after an action (faster when chaining)" })),
+});
 
 /** `state.enabled` gates every call; `state.lastScale` maps the newest screenshot's coordinates. */
 export function computerTool(state) {
-	let epoch; // lease epoch of the action being executed
-	const icall = (op, args = {}, t) => call(op, { ...args, epoch }, t);
 	let elWindow; // window of the latest elements list
 	let target; // the window midnight is working in: keystrokes only ever go there
 
@@ -171,7 +192,7 @@ export function computerTool(state) {
 		if (!self && (!target || fg.pid === target.pid)) return fg;
 		const want = target ?? (await resolveWindow());
 		if (!want) throw new Error("There is no window to type into.");
-		await icall("focus", { hwnd: want.hwnd }).catch(() => false);
+		await call("focus", { hwnd: want.hwnd }).catch(() => false);
 		await sleep(120);
 		const now = await foreground().catch(() => null);
 		if (!now || now.pid === process.pid || (want.pid && now.pid !== want.pid)) {
@@ -189,14 +210,14 @@ export function computerTool(state) {
 	// Start an app and wait for its window, then focus it (Windows often opens new windows behind the active one).
 	async function launchAndWait(spec) {
 		const before = new Set((await listWindows()).map((w) => w.hwnd));
-		await icall("launch", { target: spec });
+		await call("launch", { target: spec });
 		const base = spec.split(/[\\/]/).pop().replace(/\.exe$/i, "").toLowerCase();
 		for (let i = 0; i < 24; i++) {
 			await sleep(250);
 			const fresh = (await listWindows()).filter((w) => !before.has(w.hwnd));
 			const w = fresh.find((x) => x.proc.includes(base) || x.title.toLowerCase().includes(base)) ?? fresh[0];
 			if (w) {
-				await icall("focus", { hwnd: w.hwnd }).catch(() => false);
+				await call("focus", { hwnd: w.hwnd }).catch(() => false);
 				target = w;
 				return `Opened ${w.proc} · ${w.title} (window ${w.hwnd}) and focused it.`;
 			}
@@ -215,13 +236,26 @@ export function computerTool(state) {
 	};
 
 	return {
-		...COMPUTER,
+		name: "computer",
+		label: "Computer",
+		description:
+			"Control the user's Windows desktop (any app, including the user's own browser) with mouse and keyboard. " +
+			"Most accurate: `elements` lists the clickable controls of a window (from Windows UI Automation) with ids and exact centers; " +
+			"then `click_element` / `set_value` by id (a window with no controls returns a screenshot instead). `read_text` returns the exact text of a window or element (documents, editors, the " +
+			"page in the user's browser) without a screenshot. Use screenshots to see, `zoom` to read small text, `windows` / `focus_window` " +
+			"to switch apps, `launch` to open an app or file. Coordinates are pixels of the most recent screenshot. " +
+			"Actions return a fresh screenshot unless screenshot is false. Prefer the `browser`, `search` and `read_pages` tools for web work " +
+			"that doesn't need the user's own browser.",
+		promptSnippet: "computer: see and control the Windows desktop (elements by id, screenshot, click, type, key, zoom, windows)",
 		parameters: Params,
 		executionMode: "sequential",
 		async execute(_id, p, signal) {
-			const denied = state.authorize ? state.authorize(p) : state.enabled ? undefined : "Computer use is off for this task. It needs an approved plan with usesComputer: true (and Settings must allow it).";
-			if (denied) return { content: [{ type: "text", text: denied }], details: {} };
-			epoch = p.epoch;
+			if (!state.enabled) {
+				return {
+					content: [{ type: "text", text: "Computer use is off for this task. It needs an approved plan with usesComputer: true (and Settings must allow it)." }],
+					details: {},
+				};
+			}
 			const g = geometry();
 			if (!state.lastScale || state.lastScale === 1) state.lastScale = g.scale;
 			const px = (v) => Math.round((v ?? 0) * state.lastScale);
@@ -254,7 +288,7 @@ export function computerTool(state) {
 					need("window");
 					const w = await resolveWindow(p.window);
 					if (!w) throw new Error(`no window matches "${p.window}"`);
-					const ok = await icall("focus", { hwnd: w.hwnd });
+					const ok = await call("focus", { hwnd: w.hwnd });
 					target = w;
 					note = ok ? `Focused ${w.proc} · ${w.title}.` : `Tried to focus ${w.title}; Windows may have blocked it (click the window instead).`;
 					after = 250;
@@ -272,9 +306,6 @@ export function computerTool(state) {
 					}
 					elWindow = r.window;
 					target = r.window;
-					lastElements.clear();
-					for (const e of r.items) lastElements.set(e.id, e);
-					lastElementsWindow = r.window;
 					state.lastScale = g.scale;
 					const head = `Window ${r.window.hwnd}: ${r.window.proc} · ${r.window.title}${r.cut ? " (list cut short; zoom or scroll for more)" : ""}`;
 					const lines = r.items.map((e) => describeEl(e, g.scale));
@@ -302,7 +333,7 @@ export function computerTool(state) {
 					const r = await call("elrect", { id: p.id });
 					show(r.x, r.y);
 					await sleep(120);
-					await icall("click", { x: r.x, y: r.y, count: 1, button: "left" });
+					await call("click", { x: r.x, y: r.y, count: 1, button: "left" });
 					await retarget();
 					after = 300;
 					break;
@@ -312,15 +343,15 @@ export function computerTool(state) {
 					const r = await call("elrect", { id: p.id });
 					show(r.x, r.y);
 					let how = "";
-					if (!BROWSERS.has(elWindow?.proc)) how = await icall("setvalue", { id: p.id, text: p.text }).catch(() => "");
+					if (!BROWSERS.has(elWindow?.proc)) how = await call("setvalue", { id: p.id, text: p.text }).catch(() => "");
 					if (how !== "set") {
 						// browsers (and fields without a value pattern): click, select all, type like a person
-						await icall("click", { x: r.x, y: r.y, count: 1, button: "left" });
+						await call("click", { x: r.x, y: r.y, count: 1, button: "left" });
 						await sleep(80);
 						await ensureFocus();
-						await icall("key", { combo: "ctrl+a" });
-						if (p.text) await icall("type", { text: p.text });
-						else await icall("key", { combo: "delete" });
+						await call("key", { combo: "ctrl+a" });
+						if (p.text) await call("type", { text: p.text });
+						else await call("key", { combo: "delete" });
 					}
 					after = 150;
 					break;
@@ -331,7 +362,7 @@ export function computerTool(state) {
 					need("x", "y");
 					show(px(p.x), px(p.y));
 					await sleep(120);
-					await icall("click", {
+					await call("click", {
 						x: px(p.x),
 						y: px(p.y),
 						count: p.action === "double_click" ? 2 : 1,
@@ -343,21 +374,21 @@ export function computerTool(state) {
 				case "move":
 					need("x", "y");
 					show(px(p.x), px(p.y));
-					await icall("move", { x: px(p.x), y: px(p.y) });
+					await call("move", { x: px(p.x), y: px(p.y) });
 					after = 60;
 					break;
 				case "drag":
 					need("x", "y", "x2", "y2");
 					show(px(p.x), px(p.y), { x2: px(p.x2) / g.dip, y2: px(p.y2) / g.dip });
 					await sleep(120);
-					await icall("drag", { x: px(p.x), y: px(p.y), x2: px(p.x2), y2: px(p.y2) });
+					await call("drag", { x: px(p.x), y: px(p.y), x2: px(p.x2), y2: px(p.y2) });
 					after = 200;
 					break;
 				case "type": {
 					need("text");
 					const w = await ensureFocus();
 					show();
-					await icall("type", { text: p.text }, 30000);
+					await call("type", { text: p.text }, 30000);
 					note = `Typed into ${w.proc} · ${w.title}.`;
 					after = 100;
 					break;
@@ -366,14 +397,14 @@ export function computerTool(state) {
 					need("key");
 					if (!/^win(\+|$)/i.test(p.key)) await ensureFocus(); // win-key combos are global
 					show();
-					await icall("key", { combo: p.key });
+					await call("key", { combo: p.key });
 					after = 250;
 					break;
 				}
 				case "scroll":
 					need("x", "y");
 					show(px(p.x), px(p.y));
-					await icall("scroll", { x: px(p.x), y: px(p.y), dy: Math.round(p.dy ?? 0), dx: Math.round(p.dx ?? 0) });
+					await call("scroll", { x: px(p.x), y: px(p.y), dy: Math.round(p.dy ?? 0), dx: Math.round(p.dx ?? 0) });
 					after = 250;
 					break;
 				case "zoom": {

@@ -12,6 +12,7 @@ import { browserTool } from "./tools/browser.mjs";
 import { computerTool } from "./tools/computer.mjs";
 import { userBrowserTool, userContext } from "./tools/userbrowser.mjs";
 import { chooseDefaultModel, pruneImages } from "./harness-utils.mjs";
+import { corePaths } from "../runtime/paths.mjs";
 
 // Luna when the catalog has it, then the older default, then any vision model.
 const PREFERRED_MODEL = "gpt-6-luna";
@@ -85,7 +86,9 @@ export function expandPrompt(t) {
 }
 
 export async function createHarness({ getBrowserContents, web, emit, hooks = {}, settings }) {
-	const modelRuntime = await ModelRuntime.create();
+	// Pi 1.0 defaults to ~/.pi; keep the sign-ins where the 0.99 fork kept them.
+	const core = corePaths();
+	const modelRuntime = await ModelRuntime.create({ authPath: core.authPath, modelsStorePath: core.modelsStorePath, modelsPath: core.modelsPath });
 	const state = { enabled: false, lastScale: 1, onAct: hooks.onAct };
 	const pending = new Map();
 	let session;
@@ -235,6 +238,7 @@ ${extra}` : base;
 		const cwd = homedir();
 		({ session } = await createAgentSession({
 			cwd,
+			agentDir: core.agentDir,
 			model,
 			thinkingLevel: settings.get().thinking,
 			modelRuntime,

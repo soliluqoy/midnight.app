@@ -1,0 +1,14 @@
+{
+	"id": "file-organizer",
+	"version": 1,
+	"title": "Tidy a folder",
+	"purpose": "Move files in a selected folder into subfolders by type, never deleting, with an undo list.",
+	"inputs": ["folder"],
+	"outputs": ["moves with undo manifest"],
+	"capabilities": ["read.local", "local.move"],
+	"tools": ["files_find", "files_move", "files_undo_moves"],
+	"network": [],
+	"resourceClass": "local",
+	"checks": [{ "kind": "receipt", "effect": "local.move" }],
+	"prompt": "List the folder with files_find, propose subfolders inside the same selected folder, then call files_move once with all moves. Never delete, never move executables or scripts. Report the undo list path."
+}
