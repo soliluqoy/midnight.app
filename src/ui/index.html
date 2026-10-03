@@ -2,60 +2,91 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
-<title>midnight.server</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>midnight</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="live" class="sr" aria-live="polite" aria-atomic="true"></div>
 <div id="cap" data-s="idle" data-m="idle" data-f="none">
   <!-- resting pill -->
-  <div class="lay l-idle" id="l-idle">
-    <i class="dot"></i><strong>midnight.server</strong><span class="st" id="idleSt">idle</span>
+  <div class="lay l-idle" id="l-idle" role="button" tabindex="0" aria-label="Open midnight">
+    <i class="dot" aria-hidden="true"></i><strong>midnight</strong><span class="badge" id="badge" hidden></span><span class="st" id="idleSt">idle</span>
   </div>
 
   <!-- ask for work -->
   <div class="lay l-chat" id="l-chat">
-    <div class="row"><i class="dot"></i><strong>midnight.server</strong><button class="chip" id="chipModel" title="Change model">model</button><span class="mono" id="hint">Ctrl+Alt+M · Esc closes</span><button class="chip clip" id="chipClip" hidden></button><button class="ib" id="gearChat" title="Settings">⚙</button></div>
-    <textarea id="box" class="inp" rows="2" placeholder="Ask or give a task…   ? quick · ?? deep · ↑ last"></textarea>
+    <div class="row"><i class="dot" aria-hidden="true"></i><strong>midnight</strong><button class="chip" id="chipModel" title="Change model">model</button><span class="chip ctx" id="chipCtx" title="Where this mission's data goes">cloud</span><span class="mono" id="hint">Ctrl+Alt+M · Esc closes</span><button class="chip clip" id="chipClip" hidden></button><button class="ib" id="bStackChat" title="All missions" aria-label="All missions">☰</button><button class="ib" id="gearChat" title="Settings" aria-label="Settings">⚙</button></div>
+    <textarea id="box" class="inp" rows="2" aria-label="Ask or give a task" placeholder="Ask or give a task…   ? quick · ?? deep · ↑ last"></textarea>
+  </div>
+
+  <!-- mission stack -->
+  <div class="lay l-stack" id="l-stack">
+    <div class="mh">
+      <i class="dot" aria-hidden="true"></i>
+      <div class="t"><small>MIDNIGHT</small><b>Missions</b></div>
+      <span class="mono" id="weather"></span>
+      <button class="ib" id="gearStack" title="Settings" aria-label="Settings">⚙</button>
+      <button class="ib" id="bNew" title="New task (Ctrl+L)" aria-label="New task">＋</button>
+      <button class="ib" id="bMinStack" title="Tuck away" aria-label="Tuck away">—</button>
+    </div>
+    <div class="stack" id="stack" role="list"></div>
   </div>
 
   <!-- mission -->
   <div class="lay l-mission" id="l-mission">
     <div class="mh">
-      <i class="dot"></i>
+      <i class="dot" aria-hidden="true"></i>
       <div class="t"><small id="mLabel">MISSION</small><b id="mTitle">New mission</b></div>
       <span class="time" id="mTime">0:00</span>
-      <button class="ib" id="gearMission" title="Settings">⚙</button>
-      <button class="ib" id="bLog" title="Show the activity log">≡</button>
-      <button class="ib" id="bPeek" title="Show the background browser">◫</button>
-      <button class="ib" id="bRead" title="Reading view (Ctrl+E)">⤢</button>
-      <button class="ib" id="bMin" title="Tuck away (keeps working)">—</button>
+      <button class="ib" id="bStack" title="All missions" aria-label="All missions">☰</button>
+      <button class="ib" id="bLog" title="Show the activity log" aria-label="Show the activity log">≡</button>
+      <button class="ib" id="bPeek" title="Show the background browser" aria-label="Show the background browser">◫</button>
+      <button class="ib" id="bRead" title="Reading view (Ctrl+E)" aria-label="Reading view">⤢</button>
+      <button class="ib" id="bMin" title="Tuck away (keeps working)" aria-label="Tuck away">—</button>
     </div>
+    <div class="strip" id="screenStrip" hidden></div>
     <div class="mp"><small>YOU ASKED</small><span id="prompt"></span></div>
-    <ul class="steps" id="steps"></ul>
-    <div class="conn"><span id="cBrowser" title="midnight's background web tools">web</span><span id="cYours" title="your own browser">your browser</span><span id="cDesk" title="mouse and keyboard on your desktop">desktop</span></div>
-    <div class="feed" id="feed"></div>
+    <ul class="steps" id="steps" aria-label="Plan"></ul>
+    <div class="conn"><span id="cBrowser" title="midnight's background web tools">web</span><span id="cFiles" title="your selected folders">files</span><span id="cYours" title="your own browser">your browser</span><span id="cDesk" title="mouse and keyboard on your desktop">desktop</span></div>
+    <div class="feed" id="feed" aria-label="Activity"></div>
     <div class="ans" id="ans" hidden></div>
+    <div class="evidence" id="evidence" hidden></div>
+    <div class="arts" id="arts" hidden></div>
     <div class="foot">
-      <div class="f-plan" id="fPlan">
-        <span class="mono" id="planNote"></span>
-        <button class="pb" id="planNo">Cancel</button><button class="pb pri" id="planYes">Approve plan</button>
-      </div>
       <div class="f-run" id="fRun">
-        <span class="mono">working · <b>Esc</b> to take over</span>
+        <span class="mono" id="runNote">working · <b>Esc</b> to take over</span>
+        <button class="pb" id="pause">Pause</button>
         <button class="pb warm" id="stop">Take over</button>
       </div>
-      <div class="f-ask" id="fAsk">
+      <div class="f-ask" id="fAsk" role="dialog" aria-labelledby="askTitle">
         <h5><i>!</i><span id="askTitle"></span></h5>
-        <p id="askDetail"></p>
-        <div class="row"><span class="mono">nothing leaves your computer without this</span>
-          <button class="pb" id="askNo">Decline</button><button class="pb pri" id="askYes">Approve</button></div>
+        <dl class="facts" id="askFacts"></dl>
+        <details id="askPreviewBox"><summary>Preview</summary><pre id="askPreview"></pre></details>
+        <p id="askConsequence" class="cons"></p>
+        <div class="row"><span class="mono" id="askWhy"></span>
+          <button class="pb" id="askNo">Decline</button><button class="pb" id="askEdit" hidden>Edit</button><button class="pb" id="askRoutine" hidden>Allow this routine</button><button class="pb pri" id="askYes">Approve</button></div>
+      </div>
+      <div class="f-q" id="fQ" role="dialog" aria-labelledby="qText">
+        <h5><i>?</i><span id="qText"></span></h5>
+        <div class="opts" id="qOpts"></div>
+      </div>
+      <div class="f-rec" id="fRec">
+        <h5 id="recH">Checking before trying again</h5>
+        <p id="recText"></p>
+        <div id="recItems"></div>
+        <div class="row"><span class="mono" id="recNext"></span><button class="pb" id="recCancel">Cancel mission</button></div>
+      </div>
+      <div class="f-wait" id="fWait">
+        <span class="mono" id="waitNote"></span>
+        <button class="pb" id="waitAlt">Cancel</button><button class="pb pri" id="waitMain">Resume</button>
       </div>
       <div class="f-done" id="fDone">
         <div class="row"><h5 id="doneH">Done</h5><div class="rc" id="receipts"></div></div>
+        <ul class="checks" id="checks" aria-label="Outcome checks"></ul>
         <p id="doneText"></p>
-        <textarea id="reply" class="inp reply" rows="1" placeholder="Ask a follow-up…  (Enter)"></textarea>
-        <div class="row"><span class="mono" id="doneSub"></span><button class="pb" id="copy" title="Copy answer (Ctrl+Shift+C)">Copy</button><button class="pb pri" id="again" title="Ctrl+L">New task</button></div>
+        <textarea id="reply" class="inp reply" rows="1" aria-label="Ask a follow-up" placeholder="Ask a follow-up…  (Enter)"></textarea>
+        <div class="row"><span class="mono" id="doneSub"></span><button class="pb" id="saveRecipe" hidden title="Save as a reusable routine">Save routine</button><button class="pb" id="copy" title="Copy answer (Ctrl+Shift+C)">Copy</button><button class="pb pri" id="again" title="Ctrl+L">New task</button></div>
       </div>
       <div class="f-login" id="fLogin">
         <span class="mono" id="loginNote">Sign in to an AI provider to start.</span>
@@ -63,7 +94,7 @@
       </div>
     </div>
   </div>
-  <!-- settings -->
+  <!-- settings and first-run -->
   <div class="lay l-settings" id="l-settings"></div>
 </div>
 <script src="md.js"></script>

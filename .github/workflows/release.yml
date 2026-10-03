@@ -3,29 +3,43 @@ name: release
 on:
   push:
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - name: Unit, end-to-end, adversarial and architecture tests
+        run: npm test
+      - name: App starts, engine comes up, capsule renders without errors
+        run: npm run test:smoke
+      - name: Every capsule state renders without errors (pixel baselines are machine-specific)
+        run: npm run test:visual
+        env:
+          VISUAL_ERRORS_ONLY: "1"
+
   build:
+    needs: test
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             args: --win --x64
-            glob: release/*.zip
-            out: midnight-win-x64.zip
           - os: macos-14
             args: --mac --arm64
-            glob: release/*.zip
-            out: midnight-mac-arm64.zip
           - os: ubuntu-latest
             args: --linux --x64
-            glob: release/*.AppImage
-            out: midnight-linux-x64.AppImage
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -34,19 +48,36 @@ jobs:
           node-version: 24
       - run: npm ci
       - name: Build
+        # Windows signing uses CSC_LINK / CSC_KEY_PASSWORD when the repository has them; without them the build is
+        # unsigned and the in-app updater will refuse to install it (it opens the release page instead).
         run: npx electron-builder ${{ matrix.args }} --publish never
         env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - name: Stable file name (the installers download releases/latest/download/<name>)
+      - name: Software bill of materials
+        if: matrix.os == 'windows-latest'
+        run: node scripts/sbom.mjs
+      - name: Stable file names (the installers download releases/latest/download/<name>)
         shell: bash
         run: |
-          f=$(ls ${{ matrix.glob }} | head -n1)
-          [ "$f" = "release/${{ matrix.out }}" ] || mv "$f" "release/${{ matrix.out }}"
-          ls -la release
+          cd release
+          for f in *.zip *.AppImage; do
+            [ -f "$f" ] || continue
+            case "$f" in
+              *win*) mv "$f" midnight-win-x64.zip ;;
+              *mac*) mv "$f" midnight-mac-arm64.zip ;;
+              *.AppImage) mv "$f" midnight-linux-x64.AppImage ;;
+            esac
+          done
+          ls -la
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.out }}
-          path: release/${{ matrix.out }}
+          name: dist-${{ matrix.os }}
+          path: |
+            release/midnight-*
+            release/latest.yml
+            release/sbom.json
           if-no-files-found: error
 
   release:
@@ -65,7 +96,7 @@ jobs:
           body: |
             ## Install
 
-            **Windows (x64)**, in PowerShell:
+            **Windows (x64)**: run `midnight-setup-x64.exe` (per-user, no admin), or in PowerShell:
             ```powershell
             irm https://raw.githubusercontent.com/soliluqoy/midnight.app/main/install.ps1 | iex
             ```
@@ -76,4 +107,4 @@ jobs:
             ```
 
             Summon with Ctrl+Alt+M (Cmd+Alt+M on macOS), then sign in from the gear icon.
-            Desktop control (computer use) is Windows-only for now. Builds are unsigned.
+            Desktop control is Windows-only. See docs/capability-matrix.md for what is supported.
