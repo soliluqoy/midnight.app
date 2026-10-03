@@ -7,6 +7,7 @@
 //   execute():   reserve budget -> locks / screen lease -> recheck -> dispatch -> verify | reconcile -> receipt
 import { EFFECTS, isExternal, MODES } from "../contracts/domain.mjs";
 import { intentHash, sha256, stableStringify } from "./canonical.mjs";
+import { resolvePaths } from "./roots.mjs";
 
 const MUTATING = (effect) => !["read.local", "read.web", "read.connector", "compute", "artifact.stage", "browser.navigate", "desktop.observe", "open.user"].includes(effect);
 const UNCERTAIN_CODES = new Set(["ETIMEDOUT", "ECONNRESET", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT", "TIMEOUT"]);
@@ -113,7 +114,7 @@ export function createBroker(deps) {
 		if (stopped) return block(stopped);
 		let cls;
 		try {
-			cls = await spec.classify(input ?? {}, { mission, roots });
+			cls = resolvePaths(await spec.classify(input ?? {}, { mission, roots }));
 		} catch (err) {
 			return block(`the request is not valid (${err.message})`);
 		}
@@ -342,7 +343,7 @@ export function createBroker(deps) {
 			const spec = tools.get(intent.tool);
 			if (!spec) throw new Error(`tool ${intent.tool} is not available`);
 			const { args } = JSON.parse(journal.getPayload(intent.argsRef) ?? "{}");
-			const cls = await spec.classify(args ?? {}, { mission: missions.get(intent.missionId), roots });
+			const cls = resolvePaths(await spec.classify(args ?? {}, { mission: missions.get(intent.missionId), roots }));
 			if (intentHash(spec.name, cls.canonical ?? args) !== intent.argsHash) throw new Error("the stored action no longer matches what was approved");
 			return dispatch(intentId, spec, cls, args, { signal, missionId: intent.missionId, runId: intent.runId });
 		},

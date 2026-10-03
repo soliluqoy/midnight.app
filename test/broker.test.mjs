@@ -1,8 +1,10 @@
 // P01-P04 acceptance: only trusted UI creates authority, exact approvals bind to the intent, revocation is
 // re-checked at dispatch, uncertain effects are never blindly retried, and stops block new dispatch.
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
-import { callId, makeCore } from "./helpers.mjs";
+import { callId, makeCore, tempDir } from "./helpers.mjs";
 
 const sent = [];
 const mailSpec = (behavior = {}) => ({
@@ -218,6 +220,27 @@ test("rehearsal runs authorization but not the effect", async () => {
 	const out = await run(core, "m1", "mail_send", { to: ["sam@example.test"], subject: "s", body: "b" });
 	assert.match(out.content[0].text, /rehearsal/);
 	assert.equal(sent.length, 0);
+	core.close();
+});
+
+test("folder authority follows where a path really points (links, short names), not how it is spelled", async () => {
+	const fileRead = { name: "files_read", label: "Read file", classify: (a) => ({ effect: "read.local", target: a.path, paths: [a.path], canonical: a }), execute: async () => ({ content: [{ type: "text", text: "ok" }] }) };
+	const core = await makeCore({ tools: [fileRead] });
+	core.addMission("m1");
+	const selected = tempDir("selected");
+	const outside = tempDir("outside");
+	fs.writeFileSync(path.join(selected, "a.txt"), "a");
+	fs.writeFileSync(path.join(outside, "b.txt"), "b");
+	core.roots.add(selected);
+	const into = path.join(tempDir("links"), "into");
+	const out = path.join(path.dirname(into), "out");
+	fs.symlinkSync(selected, into, "junction");
+	fs.symlinkSync(outside, out, "junction");
+	assert.equal((await run(core, "m1", "files_read", { path: path.join(into, "a.txt") })).content[0].text, "ok", "a link into the folder reads without a prompt");
+	assert.equal(core.approvals.pending().length, 0);
+	run(core, "m1", "files_read", { path: path.join(out, "b.txt") });
+	await core.until(() => core.approvals.pending().length === 1);
+	assert.equal(core.approvals.pending()[0].display.target, path.join(out, "b.txt"), "a link out of the folder still asks");
 	core.close();
 });
 

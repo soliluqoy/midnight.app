@@ -7,6 +7,7 @@ import path from "node:path";
 import { Type } from "typebox";
 import { fileHash } from "../evidence/store.mjs";
 import { within } from "../policy/grants.mjs";
+import { realTarget } from "../policy/roots.mjs";
 import { readDocx } from "./documents/docx.mjs";
 import { readXlsx } from "./documents/xlsx.mjs";
 
@@ -19,18 +20,7 @@ const BIG = 200 * 1024 * 1024;
 export const TYPES = { xlsx: "spreadsheet", xlsm: "spreadsheet", csv: "spreadsheet", tsv: "spreadsheet", docx: "document", pdf: "pdf", md: "text", txt: "text", json: "text", pptx: "slides", png: "image", jpg: "image", jpeg: "image", svg: "image", eml: "mail" };
 const typeOf = (f) => TYPES[path.extname(f).slice(1).toLowerCase()] ?? "other";
 
-/** Real path of `p` (or of its nearest existing parent for a file that does not exist yet). */
-export function realTarget(p) {
-	let cur = path.resolve(p);
-	const tail = [];
-	while (!fs.existsSync(cur)) {
-		tail.unshift(path.basename(cur));
-		const up = path.dirname(cur);
-		if (up === cur) break;
-		cur = up;
-	}
-	return path.join(fs.realpathSync.native(cur), ...tail);
-}
+export { realTarget };
 
 /** Throw unless `p` (after resolving links) is inside one of `roots`. */
 export function assertInside(roots, p, what = "path") {
