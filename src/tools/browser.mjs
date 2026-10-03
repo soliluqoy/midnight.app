@@ -1,20 +1,9 @@
-import { Type } from "typebox";
+import { BROWSER } from "./schemas.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const Params = Type.Object({
-	action: Type.Union(
-		["navigate", "screenshot", "click", "type", "key", "scroll", "read", "back", "forward", "session"].map((a) => Type.Literal(a)),
-		{ description: "What to do" },
-	),
-	url: Type.Optional(Type.String({ description: "URL for navigate; for session, the site to check" })),
-	x: Type.Optional(Type.Number({ description: "X in screenshot pixels (page CSS px)" })),
-	y: Type.Optional(Type.Number({ description: "Y in screenshot pixels (page CSS px)" })),
-	text: Type.Optional(Type.String({ description: "text for type (goes to the focused field)" })),
-	key: Type.Optional(Type.String({ description: "key for key: Enter, Tab, Backspace, Escape, ArrowDown, PageDown..." })),
-	dy: Type.Optional(Type.Number({ description: "scroll pixels; positive = down" })),
-	screenshot: Type.Optional(Type.Boolean({ description: "false skips the screenshot (faster) when you don't need to see the page" })),
-});
+const Params = BROWSER.parameters;
+
 
 /** `wc()` returns the WebContents of the embedded browser view. */
 export function browserTool(wc) {
@@ -44,14 +33,7 @@ export function browserTool(wc) {
 		wc().sendInputEvent({ type, x: Math.round(x), y: Math.round(y), button: "left", clickCount: 1, ...extra });
 
 	return {
-		name: "browser",
-		label: "Browser",
-		description:
-			"Use the app's built-in web browser (Chromium, persistent logins) when you must interact with a page: log in, click, " +
-			"fill forms. It runs in the background without touching the user's screen. For just reading, prefer `search` and `read_pages`. " +
-			"`session` tells whether this browser is signed in to a site. Coordinates are pixels of the latest screenshot. " +
-			"Every action except `read` returns a screenshot unless screenshot is false. `read` returns the page's visible text.",
-		promptSnippet: "browser: navigate, screenshot, click, type, key, scroll, read in the built-in web browser",
+		...BROWSER,
 		parameters: Params,
 		executionMode: "sequential",
 		async execute(_id, p) {

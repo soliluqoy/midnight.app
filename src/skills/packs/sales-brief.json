@@ -1,0 +1,14 @@
+{
+	"id": "sales-brief",
+	"version": 1,
+	"title": "Sales brief",
+	"purpose": "Turn the latest quarterly sales file and CRM figures into a verified comparison, chart, report and draft message.",
+	"inputs": ["sales folder", "quarter", "recipients"],
+	"outputs": ["chart (SVG + CSV)", "report (DOCX)", "mail draft"],
+	"capabilities": ["read.local", "read.connector", "compute", "artifact.stage", "local.write", "external.communication"],
+	"tools": ["files_find", "sheet_read", "crm_query", "calculate", "chart_create", "report_create", "mail_draft", "mail_send", "file_publish", "ask_user"],
+	"network": [],
+	"resourceClass": "local",
+	"checks": [{ "kind": "evidence" }, { "kind": "calculation" }, { "kind": "artifact", "type": "chart" }, { "kind": "artifact", "type": "report" }],
+	"prompt": "1) files_find the sales workbook; if a final and a draft version both fit and differ, ask_user which is final. 2) sheet_read the regions and both quarters; note units and hidden rows. 3) crm_query closed-won deals for the quarter and compare; report any mismatch with both numbers, never invent agreement. 4) calculate totals and the percentage change. 5) chart_create and report_create from those numbers. 6) mail_draft with the chart and report attached; mail_send only if the user asked to send. Plan with checks: evidence, calculation, artifact chart, artifact report, plus receipt external.communication when sending."
+}

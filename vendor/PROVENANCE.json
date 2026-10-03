@@ -1,0 +1,70 @@
+{
+	"source": "upstream",
+	"packedAt": "2026-10-03T19:45:09.599Z",
+	"packages": [
+		{
+			"name": "@earendil-works/chord",
+			"version": "1.0.1",
+			"file": "earendil-works-chord-1.0.1.tgz",
+			"integrity": "sha512-woq15kjUZ38fUIMqFrFzTeT0fYYM0CfGS2ELCUE5Ufni32tdxfs0Av2+zz8PXFNxyiC3SB1EnyGPp63CLtp8Fg==",
+			"license": "MIT",
+			"origin": "https://registry.npmjs.org/@earendil-works/chord/-/chord-1.0.1.tgz"
+		},
+		{
+			"name": "@earendil-works/pi-telemetry",
+			"version": "1.0.1",
+			"file": "earendil-works-pi-telemetry-1.0.1.tgz",
+			"integrity": "sha512-SuJ/4KyqZ6j6Whlau710DmusWDKMWCxKXpWqZclY/Cl3tGUuX8IFmbTbW2VRoVuoJpZYVMg6DJmt1mwHMUt9uw==",
+			"license": "MIT",
+			"origin": "https://registry.npmjs.org/@earendil-works/pi-telemetry/-/pi-telemetry-1.0.1.tgz"
+		},
+		{
+			"name": "@earendil-works/pi-ai",
+			"version": "1.0.1",
+			"file": "earendil-works-pi-ai-1.0.1.tgz",
+			"integrity": "sha512-eSA53pdfDLuQTTJn3yz1VC8BBmcX33OKkk8WihOXdVBvbgqqC4zuR6Sf+TeeWuAmh8LuqARoK14R1s2HZqVcsw==",
+			"license": "MIT",
+			"origin": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.0.1.tgz"
+		},
+		{
+			"name": "@earendil-works/pi-agent-core",
+			"version": "1.0.1",
+			"file": "earendil-works-pi-agent-core-1.0.1.tgz",
+			"integrity": "sha512-os85rJM2hgCOOLdtcQ5WxRRhAbQiTNq9+48/pj6dOUU7czJhU8NTdHmDs41hBfAXR/ZQgstIgrjowEICEXimbQ==",
+			"license": "MIT",
+			"origin": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-1.0.1.tgz"
+		},
+		{
+			"name": "@earendil-works/pi-tui",
+			"version": "1.0.1",
+			"file": "earendil-works-pi-tui-1.0.1.tgz",
+			"integrity": "sha512-Rk/pWLoDKWI7WvywhLxf+DTYppS7XWTN5IacpqlD+QF+CbrT/y5CCnAHqPEoF41y+XtQJKbNjjzUuJE4yq0Dfg==",
+			"license": "MIT",
+			"origin": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.0.1.tgz"
+		},
+		{
+			"name": "@earendil-works/pi-coding-agent",
+			"version": "1.0.1",
+			"file": "earendil-works-pi-coding-agent-1.0.1.tgz",
+			"integrity": "sha512-B7FGYpHpBPvS+Ux16CbCuVnE9S4v6c2h6ykocPNarC4msD/4JM/eFrCrO2wbRkedJZ25myFozSWHvCOx4QnN+w==",
+			"license": "MIT",
+			"origin": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.0.1.tgz"
+		},
+		{
+			"name": "@earendil-works/pi-mcp",
+			"version": "1.0.1",
+			"file": "earendil-works-pi-mcp-1.0.1.tgz",
+			"integrity": "sha512-XuhcCpNT9FgsMQTzjmwy2hbakg9CODcDHtC+KeHfr37HjKdj4QsfOrOThxLXYRN4kmC5HDvFyLzthAnHe/T4jw==",
+			"license": "MIT",
+			"origin": "https://registry.npmjs.org/@earendil-works/pi-mcp/-/pi-mcp-1.0.1.tgz"
+		},
+		{
+			"name": "@earendil-works/pi-codemode",
+			"version": "1.0.1",
+			"file": "earendil-works-pi-codemode-1.0.1.tgz",
+			"integrity": "sha512-RpZKpdKceYmIODfqKLJtZWUvfkbDGmEHxEEEYN+i21OFm8uY0sTcBMP4oaLf6SkBVBMPae1Z9GtW27+dIRAYPw==",
+			"license": "MIT",
+			"origin": "https://registry.npmjs.org/@earendil-works/pi-codemode/-/pi-codemode-1.0.1.tgz"
+		}
+	]
+}

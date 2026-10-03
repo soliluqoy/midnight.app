@@ -1,57 +1,105 @@
+// The capsule renderer. It shows the engine's projections and never decides outcomes: a mission turns mint only when
+// the engine says its checks passed; streaming text is shown live, but the record is the engine's.
 const $ = (id) => document.getElementById(id);
 const cap = $("cap");
+const api = window.midnight;
 
-let cur = "idle"; // idle | chat | mission | read | settings
-let signedIn = true; // true once a model is available
+let cur = "idle"; // idle | chat | mission | read | settings | stack
 let prev = "chat";
-let accel = "Ctrl+Alt+M";
-const RANK = { idle: 0, chat: 1, mission: 2, settings: 2, read: 3 };
+let signedIn = true;
+let prefs = { textSize: 1, autoExpand: true, highContrast: false, reducedMotion: false, mode: "ask", privacy: "cloud", onboarded: true };
+const RANK = { idle: 0, chat: 1, mission: 2, stack: 2, settings: 2, read: 3 };
 const TEXT_SIZES = [0.9, 1, 1.15, 1.3, 1.45, 1.6];
-let prefs = { textSize: 1, autoExpand: true, highContrast: false };
-let running = false;
-let hasMission = false;
-let answer = ""; // latest assistant message (Markdown), streamed
-let finalAnswer = "";
-let planId, askId;
-let steps = []; // {title, detail, tag, st}
-let hosts = new Set();
-let t0 = 0;
-let tFirst = 0;
-let timer;
-let clip = null; // {kind:"url"|"text", value}
 
-const inMission = () => cur === "mission" || cur === "read";
+// engine state
+let snap = { seq: 0, missions: {}, notifications: [], screen: null, watching: { count: 0 } };
+let current; // mission id on screen
+const live = {}; // missionId -> { text, streaming }
+const lit = {}; // missionId -> Set of connector lights
+const runStart = {}; // missionId -> ms (local clock, for the timer)
+let engine = "starting";
+let timer;
+let clip = null;
+let readEvidence = false;
+
+const TERMINAL = new Set(["succeeded", "partially-succeeded", "failed", "cancelled"]);
+const RUNNING = new Set(["queued", "planning", "ready", "running", "verifying", "recovering"]);
+const NEEDS = new Set(["waiting-input", "waiting-approval", "needs-reconciliation"]);
+const mission = () => (current ? snap.missions[current] : undefined);
+const reqId = () => `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+// ---------- screen-reader announcements, batched so streaming never floods speech ----------
+let say = "";
+let sayT;
+function announce(t) {
+	say = t;
+	clearTimeout(sayT);
+	sayT = setTimeout(() => ($("live").textContent = say), 600);
+}
 
 // ---------- capsule state ----------
 async function setState(s) {
 	if (s === cur) return;
+	wake();
 	const grow = RANK[s] > RANK[cur];
 	if (s === "settings" && cur !== "settings") prev = cur;
+	const from = cur;
 	cur = s;
 	if (grow) {
-		await midnight.size(s); // make room, then animate open
+		await api.ui.size(s);
 		cap.dataset.s = s;
 	} else {
-		cap.dataset.s = s; // animate closed, then shrink the window
-		setTimeout(() => cur === s && midnight.size(s), 850);
+		cap.dataset.s = s;
+		setTimeout(() => cur === s && api.ui.size(s), prefs.reducedMotion ? 150 : 850);
 	}
 	if (s === "chat") {
 		checkClipboard();
 		setTimeout(async () => {
-			await midnight.focus();
+			await api.ui.focus();
 			$("box").focus();
 		}, 350);
 	}
+	if (s === "stack") renderStack();
+	if ((s === "mission" || s === "read") && from !== "mission" && from !== "read") setTimeout(() => focusFooter(), 400);
+	cap.dataset.e = s === "read" && readEvidence ? "1" : "";
 }
-const mood = (m) => {
-	cap.dataset.m = m;
-	$("idleSt").textContent = signedIn ? ({ idle: "idle", work: "working", ask: "needs you", done: "done" }[m] ?? m) : "sign in";
-};
-const foot = (f) => (cap.dataset.f = f);
+
+function mood() {
+	const m = mission();
+	const needs = Object.values(snap.missions).filter((x) => NEEDS.has(x.status) && !x.archived).length;
+	const running = Object.values(snap.missions).some((x) => RUNNING.has(x.status));
+	let md = "idle";
+	if (cur !== "idle" && m) md = NEEDS.has(m.status) ? "ask" : RUNNING.has(m.status) ? "work" : m.status === "succeeded" ? "done" : TERMINAL.has(m.status) ? "warn" : "idle";
+	else md = needs ? "ask" : running ? "work" : "idle";
+	if (cap.dataset.m !== md) wake();
+	cap.dataset.m = md;
+	const notes = snap.notifications?.filter((n) => n.status === "queued").length ?? 0;
+	const badge = needs + notes;
+	$("badge").hidden = !badge;
+	$("badge").textContent = String(badge);
+	$("badge").title = `${needs} need you${notes ? ` · ${notes} update${notes > 1 ? "s" : ""}` : ""}`;
+	let st = "idle";
+	if (!signedIn) st = "sign in";
+	else if (engine !== "ready") st = engine === "down" ? "engine stopped" : "starting";
+	else if (needs) st = "needs you";
+	else if (running) st = "working";
+	else if (snap.watching?.count) st = snap.watching.next ? `watching · ${new Date(snap.watching.next).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "watching";
+	$("idleSt").textContent = st;
+	$("l-idle").setAttribute("aria-label", `midnight, ${st}${badge ? `, ${badge} waiting` : ""}`);
+}
+
+// Quiet idle: the breathing dot rests after a minute without change (it cost ~3% of a core; docs/performance.md).
+let restT;
+function wake() {
+	delete cap.dataset.rest;
+	clearTimeout(restT);
+	restT = setTimeout(() => (cap.dataset.rest = "1"), 60000);
+}
+cap.addEventListener("pointerenter", wake);
 
 // Sizes come from main (zoom- and screen-aware) as CSS variables.
 async function applyDims() {
-	const d = await midnight.dims();
+	const d = await api.ui.dims();
 	for (const [k, [w, h]] of Object.entries(d)) {
 		document.documentElement.style.setProperty(`--w-${k}`, `${w}px`);
 		document.documentElement.style.setProperty(`--h-${k}`, `${h}px`);
@@ -60,43 +108,163 @@ async function applyDims() {
 function applyPrefs(s) {
 	prefs = { ...prefs, ...s };
 	document.body.dataset.contrast = prefs.highContrast ? "high" : "";
+	document.body.dataset.motion = prefs.reducedMotion ? "reduced" : "";
+	const chip = $("chipCtx");
+	chip.dataset.p = prefs.privacy;
+	chip.textContent = prefs.privacy === "offline" ? "offline" : prefs.privacy === "local" ? "local" : "cloud";
+	chip.title =
+		prefs.privacy === "cloud"
+			? "Your request and the files you let midnight read go to the AI provider you chose. Missions, rules and files stay on this computer."
+			: prefs.privacy === "local"
+				? "Only your local model runs. Web tools may still fetch public pages."
+				: "Offline: local model and local files only. Nothing goes to the network.";
+}
+
+// ---------- engine events ----------
+function applyUpdate(m) {
+	if (m.seq <= snap.seq) return;
+	if (snap.seq && m.seq > snap.seq + 1) return resnapshot(); // a gap: never render a guessed state
+	snap.seq = m.seq;
+	if (m.mission) {
+		const before = snap.missions[m.missionId];
+		snap.missions[m.missionId] = m.mission;
+		onMissionChange(before, m.mission, m.type);
+	}
+	if (m.notifications) snap.notifications = m.notifications;
+	if (m.screen !== undefined) snap.screen = m.screen;
+	if (m.missionId === current) renderMission();
+	if (cur === "stack") renderStack();
+	mood();
+}
+async function resnapshot() {
+	try {
+		const s = await api.query.snapshot();
+		snap = s;
+		renderMission();
+		if (cur === "stack") renderStack();
+		mood();
+	} catch {}
+}
+
+function onMissionChange(before, m, type) {
+	if (RUNNING.has(m.status) && !runStart[m.id]) runStart[m.id] = Date.now();
+	if (type === "run.started") {
+		live[m.id] = { text: "", streaming: false };
+		runStart[m.id] = Date.now();
+		lit[m.id] = new Set();
+	}
+	if (before?.status !== m.status) {
+		if (NEEDS.has(m.status)) announce(`${m.title}: needs you`);
+		if (TERMINAL.has(m.status)) {
+			announce(`${m.title}: ${m.status.replace("-", " ")}`);
+			if (live[m.id]) live[m.id].streaming = false;
+			finishView(m);
+		}
+	}
+}
+
+function finishView(m) {
+	if (m.trigger?.kind && m.trigger.kind !== "user") return; // proactive work stays quiet: it waits in the queue
+	if (cur === "idle" && m.id === current) {
+		notify(m.status === "succeeded" ? "Done" : m.outcome?.status === "cancelled" ? "Cancelled" : "Needs a look", m.answer || m.outcome?.summary || "");
+	} else if (m.id === current && cur === "mission" && prefs.autoExpand && m.status === "succeeded" && (m.answer ?? "").length > 1200) {
+		setState("read");
+	}
+}
+
+function onLive(e) {
+	const l = (live[e.missionId] ??= { text: "", streaming: false });
+	if (e.type === "assistant_start") {
+		l.text = "";
+		l.streaming = true;
+	} else if (e.type === "text") {
+		l.text += e.delta;
+		l.streaming = true;
+	} else if (e.type === "tool_start") {
+		const set = (lit[e.missionId] ??= new Set());
+		set.add(e.name === "computer" ? "cDesk" : e.name === "user_browser" ? "cYours" : /^(files_|sheet_|file_)/.test(e.name) ? "cFiles" : ["search", "read_pages", "browser"].includes(e.name) ? "cBrowser" : "");
+	}
+	if (e.missionId === current) {
+		if (e.type === "tool_start") renderLights();
+		else drawAnswer();
+	}
+}
+
+api.on((m) => {
+	switch (m.kind) {
+		case "ready":
+			engine = "ready";
+			snap = m.snapshot;
+			if (!current) current = latestOpen();
+			renderMission();
+			mood();
+			break;
+		case "update":
+			applyUpdate(m);
+			break;
+		case "live":
+			onLive(m);
+			break;
+		case "shell":
+			onShell(m);
+			break;
+	}
+});
+
+function onShell(m) {
+	switch (m.type) {
+		case "summon":
+			summon();
+			break;
+		case "open-settings":
+			openSettings();
+			break;
+		case "open-mission":
+			if (m.missionId) openMission(m.missionId);
+			break;
+		case "corner":
+			document.body.dataset.corner = m.corner;
+			break;
+		case "settings":
+			applyPrefs(m.settings);
+			break;
+		case "model":
+			signedIn = !!m.model;
+			setChip(m);
+			mood();
+			break;
+		case "relayout":
+			applyDims().then(() => api.ui.size(cur));
+			break;
+		case "screen":
+			snap.screen = m.holder ? { missionId: m.holder.missionId, epoch: m.holder.epoch, title: m.holder.title } : null;
+			renderStrip();
+			break;
+		case "takeover": {
+			// The shell already revoked the screen; pause the mission you are looking at if it is the one working.
+			const target = m.missionId ?? (mission() && RUNNING.has(mission().status) ? current : undefined);
+			if (target) api.missions.pause({ missionId: target }).catch(() => {});
+			announce("You took over. Midnight stopped using the screen.");
+			break;
+		}
+		case "emergency":
+			announce("Emergency stop: nothing new will run until you resume it from the tray.");
+			resnapshot();
+			break;
+		case "update":
+			if (m.available) announce(`midnight ${m.latest} is available. Install it from Settings → Data → Updates.`);
+			break;
+		case "engine":
+			engine = m.state;
+			if (m.state === "ready") resnapshot();
+			mood();
+			renderMission();
+			break;
+	}
 }
 
 // ---------- pieces ----------
-const clock = () => {
-	const s = Math.floor((Date.now() - t0) / 1000);
-	$("mTime").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-};
-function feed(ic, cls, tx) {
-	const d = document.createElement("div");
-	d.className = `fl ${cls}`;
-	const ts = new Date();
-	d.innerHTML = `<span class="ts"></span><span class="ic"></span><span class="tx"></span>`;
-	d.children[0].textContent = `${String(ts.getMinutes()).padStart(2, "0")}:${String(ts.getSeconds()).padStart(2, "0")}`;
-	d.children[1].textContent = ic;
-	d.children[2].textContent = tx;
-	d.title = tx;
-	$("feed").append(d);
-	while ($("feed").children.length > 40) $("feed").firstChild.remove();
-}
-function renderSteps() {
-	$("steps").textContent = "";
-	steps.forEach((s) => {
-		const li = document.createElement("li");
-		li.dataset.st = s.st ?? "todo";
-		li.innerHTML = `<i class="si"></i><div><b></b><span></span></div><em class="tag" hidden></em>`;
-		li.querySelector("b").textContent = s.title;
-		li.querySelector("span").textContent = s.note ?? s.detail ?? "";
-		const tag = li.querySelector(".tag");
-		if (s.tag) {
-			tag.hidden = false;
-			tag.textContent = s.tag === "approval" ? "asks first" : s.tag;
-			if (s.tag === "approval") tag.classList.add("edge");
-		}
-		$("steps").append(li);
-	});
-}
-const lit = (id) => $(id).classList.add("lit");
+const clip40 = (s, n = 40) => (String(s).length > n ? `${String(s).slice(0, n - 1)}…` : String(s));
 const host = (u) => {
 	try {
 		return new URL(/^[a-z]+:\/\//i.test(u) ? u : `https://${u}`).host.replace(/^www\./, "");
@@ -104,63 +272,75 @@ const host = (u) => {
 		return u;
 	}
 };
-const clip40 = (s, n = 40) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+const el = (tag, props = {}, ...kids) => {
+	const e = document.createElement(tag);
+	for (const [k, v] of Object.entries(props)) {
+		if (k === "class") e.className = v;
+		else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+		else if (v !== undefined && v !== false) e.setAttribute(k, v === true ? "" : v);
+	}
+	for (const c of kids.flat()) if (c != null) e.append(c.nodeType ? c : document.createTextNode(c));
+	return e;
+};
+const elapsed = (ms) => {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+function tick() {
+	const m = mission();
+	if (!m) return;
+	const t0 = runStart[m.id] ?? Date.parse(m.createdAt);
+	const end = TERMINAL.has(m.status) || NEEDS.has(m.status) ? Date.parse(m.updatedAt) : Date.now();
+	$("mTime").textContent = elapsed(end - t0);
+}
 
-function describe(name, a = {}) {
-	if (name === "search") {
-		const qs = a.queries ?? [];
-		return ["⌕", "look", `search › ${qs.map((q) => `“${clip40(q, 36)}”`).join(" · ")}`];
-	}
-	if (name === "read_pages") {
-		const hs = (a.urls ?? []).map(host);
-		for (const h of hs) hosts.add(h);
-		return ["◎", "look", `read ${hs.length} page${hs.length === 1 ? "" : "s"} › ${hs.join(", ")}`];
-	}
-	if (name === "user_browser") {
-		if (a.action === "open") {
-			for (const u of a.urls ?? []) hosts.add(host(u));
-			return ["↗", "act", `your browser › open ${(a.urls ?? []).map(host).join(", ")}`];
+function renderLights() {
+	const set = lit[current] ?? new Set();
+	for (const id of ["cBrowser", "cFiles", "cYours", "cDesk"]) $(id).classList.toggle("lit", set.has(id));
+}
+function renderStrip() {
+	const s = snap.screen;
+	const strip = $("screenStrip");
+	strip.hidden = !s;
+	if (s) strip.textContent = `${clip40(snap.missions[s.missionId]?.title ?? s.title ?? "A mission", 34)} has the screen · Esc to take over`;
+}
+
+const STEP_STATES = { todo: "todo", active: "active", done: "done", skipped: "skipped", failed: "failed" };
+function renderSteps(m) {
+	const ul = $("steps");
+	ul.textContent = "";
+	for (const s of m.steps ?? []) {
+		const li = el("li", { "data-st": STEP_STATES[s.state] ?? "todo" }, el("i", { class: "si", "aria-hidden": "true" }), el("div", {}, el("b", {}, s.title), el("span", {}, s.note || s.detail || "")));
+		li.setAttribute("aria-label", `${s.title}: ${s.state}`);
+		if (s.tag) {
+			const tag = el("em", { class: `tag${s.tag === "approval" ? " edge" : ""}` }, s.tag === "approval" ? "asks first" : s.tag);
+			li.append(tag);
 		}
-		return ["◎", "look", a.action === "current_page" ? "your browser › read the page you're on" : "your browser › check open windows"];
+		ul.append(li);
 	}
-	const where = name === "computer" ? "desktop" : "browser";
-	const at = a.x !== undefined ? ` (${Math.round(a.x)},${Math.round(a.y)})` : "";
-	switch (a.action) {
-		case "elements":
-			return ["◎", "look", `${where} › map controls${a.window ? ` · ${clip40(a.window, 30)}` : ""}`];
-		case "click_element":
-			return ["▸", "act", `${where} › click control #${a.id}`];
-		case "set_value":
-			return ["▸", "act", `${where} › fill #${a.id} “${clip40(a.text ?? "", 30)}”`];
-		case "zoom":
-			return ["◎", "look", `${where} › zoom in`];
-		case "read_text":
-			return ["◎", "look", `${where} › read text${a.window ? ` · ${clip40(a.window, 30)}` : ""}`];
-		case "windows":
-			return ["◎", "look", `${where} › list windows`];
-		case "focus_window":
-			return ["▸", "act", `${where} › switch to ${clip40(a.window ?? "", 30)}`];
-		case "launch":
-			return ["▸", "act", `${where} › open ${clip40(a.target ?? "", 34)}`];
-		case "session":
-			return ["◎", "look", `${where} › check sign-in · ${host(a.url ?? "")}`];
-		case "navigate":
-			hosts.add(host(a.url));
-			return ["◎", "look", `${where} › open ${host(a.url)}`];
-		case "read":
-			return ["◎", "look", `${where} › read page`];
-		case "screenshot":
-			return ["◎", "look", `${where} › look at the screen`];
-		case "click":
-		case "double_click":
-		case "right_click":
-			return ["▸", "act", `${where} › ${a.action.replace("_", " ")}${at}`];
-		case "type":
-			return ["▸", "act", `${where} › type “${(a.text ?? "").slice(0, 40)}”`];
-		case "key":
-			return ["▸", "act", `${where} › press ${a.key}`];
-		default:
-			return ["▸", "act", `${where} › ${a.action ?? name}${at}`];
+}
+function renderFeed(m) {
+	const f = $("feed");
+	f.textContent = "";
+	for (const it of (m.feed ?? []).slice(-40)) {
+		const ts = new Date(it.at);
+		const d = el("div", { class: `fl ${it.cls}`, title: it.text }, el("span", { class: "ts" }, `${String(ts.getMinutes()).padStart(2, "0")}:${String(ts.getSeconds()).padStart(2, "0")}`), el("span", { class: "ic" }, it.icon), el("span", { class: "tx" }, it.text));
+		f.append(d);
+	}
+}
+function renderArtifacts(m) {
+	const box = $("arts");
+	box.textContent = "";
+	const list = m.artifacts ?? [];
+	box.hidden = !list.length;
+	for (const a of list) {
+		const b = el(
+			"button",
+			{ class: a.ok ? "" : "bad", title: `${a.type} · revision ${a.revision}${a.ok ? " · validated" : ` · did not validate: ${a.issues.join("; ")}`}${a.publishedPath ? `\nSaved: ${a.publishedPath}` : ""}\nClick to open · Alt+click to show in folder` },
+			`${a.ok ? "✓" : "!"} ${clip40(a.name, 28)} r${a.revision}`,
+		);
+		b.onclick = (e) => api.artifacts.open(a.id, e.altKey).catch((err) => announce(err.message));
+		box.append(b);
 	}
 }
 
@@ -171,128 +351,385 @@ function drawAnswer() {
 	drawQueued = true;
 	requestAnimationFrame(() => {
 		drawQueued = false;
-		const el = $("ans");
-		const text = running ? answer : finalAnswer;
-		el.hidden = !text.trim();
-		if (el.hidden) return;
-		const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-		el.innerHTML = md.render(text) + (running ? '<span class="caret"></span>' : "");
-		if (running && stick) el.scrollTop = el.scrollHeight;
+		const m = mission();
+		const node = $("ans");
+		if (!m) return (node.hidden = true);
+		const l = live[m.id];
+		const streaming = !!l?.streaming && !TERMINAL.has(m.status);
+		const text = streaming ? l.text : m.answer || l?.text || "";
+		node.hidden = !text.trim();
+		if (node.hidden) return;
+		const stick = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
+		node.innerHTML = md.render(text) + (streaming ? '<span class="caret"></span>' : "");
+		if (streaming && stick) node.scrollTop = node.scrollHeight;
 	});
 }
 $("ans").addEventListener("click", (e) => {
 	const a = e.target.closest("a[href]");
 	if (!a) return;
 	e.preventDefault();
-	midnight.openExternal(a.getAttribute("href"));
+	api.openExternal(a.getAttribute("href"));
 });
 
-// ---------- mission lifecycle ----------
-function resetTurn(text) {
-	running = true;
-	answer = "";
-	finalAnswer = "";
-	tFirst = 0;
-	steps = [];
-	renderSteps();
-	$("prompt").textContent = text;
-	$("doneText").textContent = "";
-	delete cap.dataset.log;
-	t0 = Date.now();
-	clock();
+// ---------- mission view ----------
+const LABEL = {
+	queued: "QUEUED",
+	planning: "PLANNING",
+	running: "WORKING",
+	verifying: "CHECKING",
+	recovering: "RECOVERING",
+	"waiting-input": "NEEDS YOU",
+	"waiting-approval": "NEEDS YOUR OK",
+	"waiting-resource": "WAITING",
+	"waiting-time": "WAITING",
+	paused: "PAUSED",
+	"needs-reconciliation": "CHECKING AN ACTION",
+	succeeded: "DONE",
+	"partially-succeeded": "PARTLY DONE",
+	failed: "DIDN'T FINISH",
+	cancelled: "CANCELLED",
+};
+function renderMission() {
+	const m = mission();
 	clearInterval(timer);
-	timer = setInterval(clock, 1000);
-	mood("work");
-	foot("run");
+	if (!signedIn && !m) return foot("login");
+	if (!m) return;
+	$("mTitle").textContent = m.title;
+	$("mTitle").title = m.goal ?? m.title;
+	$("mLabel").textContent = RUNNING.has(m.status) && m.label && m.label !== "MISSION" ? m.label : LABEL[m.status] ?? m.label ?? "MISSION";
+	$("prompt").textContent = m.lastInput ?? m.goal ?? "";
+	renderSteps(m);
+	renderFeed(m);
+	renderLights();
+	renderStrip();
+	renderArtifacts(m);
 	drawAnswer();
+	tick();
+	if (RUNNING.has(m.status)) timer = setInterval(tick, 1000);
+	renderFooter(m);
+	mood();
 }
 
-function startMission(text) {
-	hasMission = true;
-	hosts = new Set();
-	$("feed").textContent = "";
-	for (const id of ["cBrowser", "cYours", "cDesk"]) $(id).classList.remove("lit");
-	$("mTitle").textContent = text.replace(/^\?+\s*/, "");
-	$("mTitle").title = text;
-	$("mLabel").textContent = text.startsWith("??") ? "DEEP RESEARCH" : text.startsWith("?") ? "QUICK ANSWER" : "MISSION";
-	remember(text);
-	resetTurn(text);
-	setState("mission");
-	midnight.send(text);
+function foot(f) {
+	cap.dataset.f = f;
 }
 
-function followUp(text) {
-	remember(text);
-	feed("▸", "act", `follow-up · ${clip40(text, 60)}`);
-	resetTurn(text);
-	if (!inMission()) setState("mission");
-	midnight.send(text);
+let shownApproval;
+function renderFooter(m) {
+	if (engine === "down") {
+		$("waitNote").textContent = "Midnight's engine stopped. Your missions are saved; restart it to continue.";
+		$("waitMain").textContent = "Restart engine";
+		$("waitMain").onclick = () => api.engine.restart();
+		$("waitAlt").hidden = true;
+		return foot("wait");
+	}
+	$("waitAlt").hidden = false;
+	if (m.status === "waiting-approval" && m.approvals?.length) return renderApproval(m, m.approvals[0]);
+	if (m.status === "waiting-input" && m.waiting?.question) return renderQuestion(m, m.waiting.question);
+	if (m.status === "waiting-input" && m.waiting?.kind === "confirm") return renderConfirm(m);
+	if (m.status === "needs-reconciliation") return renderReconcile(m);
+	if (m.status === "waiting-resource" || m.status === "waiting-time") {
+		$("waitNote").textContent = m.waiting?.reason || "Waiting for resources.";
+		$("waitMain").textContent = /budget/i.test(m.waiting?.reason ?? "") ? "Extend budget" : "Try now";
+		$("waitMain").onclick = () => (/budget/i.test(m.waiting?.reason ?? "") ? api.missions.extendBudget({ missionId: m.id }) : api.missions.resume({ missionId: m.id })).catch(showErr);
+		$("waitAlt").textContent = "Stop here";
+		$("waitAlt").onclick = () => api.missions.cancel({ missionId: m.id }).catch(showErr);
+		return foot("wait");
+	}
+	if (m.status === "paused") {
+		$("waitNote").textContent = m.recovery?.finished?.length ? `Paused. Finished so far: ${m.recovery.finished.slice(0, 3).join(", ")}.` : "Paused. Nothing new runs until you resume it.";
+		$("waitMain").textContent = "Resume";
+		$("waitMain").onclick = () => api.missions.resume({ missionId: m.id }).catch(showErr);
+		$("waitAlt").textContent = "Cancel";
+		$("waitAlt").onclick = () => api.missions.cancel({ missionId: m.id }).catch(showErr);
+		return foot("wait");
+	}
+	if (RUNNING.has(m.status)) {
+		const note = $("runNote");
+		note.textContent = "";
+		if (m.status === "queued" && m.queued) note.append(m.queued);
+		else if (m.status === "verifying") note.append("checking the result…");
+		else if (m.status === "recovering") note.append(m.recovery?.next ?? "recovering after a restart…");
+		else note.append("working · ", el("b", {}, "Esc"), " to take over");
+		$("stop").textContent = snap.screen?.missionId === m.id ? "Take over" : "Stop";
+		return foot("run");
+	}
+	if (TERMINAL.has(m.status)) return renderDone(m);
+	foot("none");
 }
 
-function finish(kind, heading, text) {
-	running = false;
-	clearInterval(timer);
-	clock();
-	mood(kind === "warn" ? "ask" : "done");
-	$("doneH").textContent = heading;
-	$("doneH").style.color = kind === "warn" ? "var(--amber)" : "";
-	finalAnswer = answer.trim();
-	$("doneText").textContent = kind === "warn" || !finalAnswer ? text : "";
-	drawAnswer();
-	if (kind !== "warn") for (const s of steps) if (s.st !== "skipped") s.st = "done";
-	renderSteps();
-	const done = steps.filter((s) => s.st === "done").length;
+function renderApproval(m, a) {
+	const d = a.display ?? {};
+	$("askTitle").textContent = d.title ?? "Midnight needs your OK";
+	const facts = $("askFacts");
+	facts.textContent = "";
+	const row = (k, v) => v && facts.append(el("dt", {}, k), el("dd", {}, v));
+	row("WHAT", d.effectLabel);
+	row("ACCOUNT", d.account);
+	if (d.recipients?.length) row(`TO (${d.recipients.length})`, d.recipients.join(", "));
+	if (d.attachments?.length) row("FILES", d.attachments.map((x) => `${x.name} r${x.revision} · ${String(x.hash ?? "").slice(7, 15)}`).join("\n"));
+	if (!d.recipients?.length && d.target && !d.plan) row("TARGET", d.target);
+	$("askPreviewBox").hidden = !d.preview;
+	$("askPreview").textContent = d.preview ?? "";
+	$("askPreviewBox").open = !!d.plan;
+	$("askConsequence").textContent = d.consequence ?? "";
+	$("askWhy").textContent = d.why && d.why !== "needs your OK" ? d.why : "";
+	$("askYes").textContent = d.verb ?? "Approve";
+	$("askNo").textContent = d.decline ?? "Decline";
+	const send = d.effect === "external.communication";
+	$("askEdit").hidden = !send;
+	$("askRoutine").hidden = !d.routine || !!d.plan;
+	const decide = (decision) => async () => {
+		for (const b of ["askYes", "askNo", "askEdit", "askRoutine"]) $(b).disabled = true;
+		try {
+			await api.approvals.decide({ approvalId: a.id, nonce: a.nonce, intentHash: a.intentHash, decision });
+		} catch (err) {
+			showErr(err);
+		} finally {
+			for (const b of ["askYes", "askNo", "askEdit", "askRoutine"]) $(b).disabled = false;
+		}
+	};
+	$("askYes").onclick = decide("approve");
+	$("askNo").onclick = decide(send ? "keep-draft" : "decline");
+	$("askRoutine").onclick = decide("allow-routine");
+	$("askEdit").onclick = async () => {
+		await decide("keep-draft")();
+		$("reply").value = "Change the draft: ";
+		setTimeout(() => $("reply").focus(), 300);
+	};
+	// Tell the engine the exact card was shown; only then can it be decided.
+	if (shownApproval !== a.id) {
+		shownApproval = a.id;
+		api.approvals.displayed({ approvalId: a.id, nonce: a.nonce }).catch(() => {});
+	}
+	foot("ask");
+}
+
+function renderQuestion(m, q) {
+	$("qText").textContent = q.prompt;
+	const box = $("qOpts");
+	box.textContent = "";
+	const answer = (v) => api.missions.answer({ missionId: m.id, questionId: q.id, value: v }).catch(showErr);
+	for (const o of q.options ?? []) box.append(el("button", { class: "pb", onclick: () => answer(o) }, o));
+	const inp = el("textarea", { class: "inp", rows: "1", placeholder: q.options?.length ? "Or type an answer… (Enter)" : "Type your answer… (Enter)", "aria-label": "Your answer" });
+	inp.onkeydown = (e) => {
+		if (e.key === "Enter" && !e.shiftKey && inp.value.trim()) {
+			e.preventDefault();
+			answer(inp.value.trim());
+		}
+	};
+	box.append(inp);
+	foot("q");
+}
+
+function renderConfirm(m) {
+	const c = (m.checks ?? []).find((x) => x.kind === "confirm" && x.state === "waiting");
+	$("qText").textContent = c ? `${c.label}?` : "Does this look right?";
+	const box = $("qOpts");
+	box.textContent = "";
+	box.append(
+		el("button", { class: "pb pri", onclick: () => api.missions.confirm({ missionId: m.id, checkId: c?.id ?? "c1", ok: true }).catch(showErr) }, "Yes, it's right"),
+		el("button", { class: "pb", onclick: () => api.missions.confirm({ missionId: m.id, checkId: c?.id ?? "c1", ok: false }).catch(showErr) }, "No"),
+	);
+	foot("q");
+}
+
+function renderReconcile(m) {
+	const r = m.recovery ?? { finished: [], uncertain: [], next: "" };
+	$("recH").textContent = r.uncertain?.length ? "The request may have completed" : "Checking before trying again";
+	$("recText").textContent = r.finished?.length ? `Finished: ${r.finished.join(", ")}.` : "Nothing else was finished.";
+	const items = $("recItems");
+	items.textContent = "";
+	for (const u of r.uncertain ?? []) {
+		items.append(
+			el(
+				"div",
+				{ class: "item" },
+				el("span", { title: u.title }, u.title),
+				el("button", { class: "sb", onclick: () => api.missions.checkAgain({ missionId: m.id, intentId: u.intentId }).catch(showErr) }, "Check again"),
+				el("button", { class: "sb", onclick: () => api.missions.resolveUnknown({ missionId: m.id, intentId: u.intentId, outcome: "happened" }).catch(showErr) }, "It happened"),
+				el("button", { class: "sb", onclick: () => api.missions.resolveUnknown({ missionId: m.id, intentId: u.intentId, outcome: "did-not-happen" }).catch(showErr) }, "It didn't"),
+			),
+		);
+	}
+	$("recNext").textContent = r.next ?? "";
+	$("recCancel").onclick = () => api.missions.cancel({ missionId: m.id }).catch(showErr);
+	foot("rec");
+}
+
+const DONE_H = { succeeded: "Done", "partially-succeeded": "Partly done", failed: "Didn't finish", cancelled: "Cancelled" };
+function renderDone(m) {
+	const o = m.outcome ?? { status: m.status, summary: "" };
+	const h = $("doneH");
+	h.textContent = DONE_H[m.status] ?? "Finished";
+	h.dataset.o = m.status;
+	const checks = $("checks");
+	checks.textContent = "";
+	for (const c of m.checks ?? []) checks.append(el("li", { "data-s": c.state, title: c.detail }, `${c.label}${c.state !== "passed" ? ` — ${c.detail}` : ""}`));
 	const rc = $("receipts");
 	rc.textContent = "";
-	const chip = (t, title) => {
-		const s = document.createElement("span");
-		s.textContent = t;
-		if (title) s.title = title;
-		rc.append(s);
-	};
-	if (steps.length) chip(`${done}/${steps.length} steps`);
-	if (tFirst) chip(`first words ${((tFirst - t0) / 1000).toFixed(1)}s`, "Time until the answer started to appear");
-	const hs = [...hosts];
-	if (hs.length) chip(`${hs.length} site${hs.length === 1 ? "" : "s"}`, hs.join("\n"));
-	$("doneSub").textContent = `${$("mTime").textContent} · nothing sent without your OK`;
-	$("mLabel").textContent = "FINISHED";
+	const chip = (t, title) => rc.append(el("span", { title: title ?? "" }, t));
+	const steps = m.steps ?? [];
+	if (steps.length) chip(`${steps.filter((s) => s.state === "done").length}/${steps.length} steps reported`, "Steps the model reported; the checks below are what Midnight verified");
+	if (m.sites?.length) chip(`${m.sites.length} site${m.sites.length === 1 ? "" : "s"}`, m.sites.join("\n"));
+	if (m.budget?.text) chip(m.budget.text);
+	$("doneText").textContent = !m.answer && o.summary ? o.summary : m.status !== "succeeded" && o.summary ? o.summary : "";
+	const sends = Object.values(m.actions ?? {}).filter((a) => a.effect === "external.communication" || a.effect === "browser.commit" || a.effect === "connector.write");
+	const sent = sends.filter((a) => a.state === "verified").length;
+	$("doneSub").textContent = `${$("mTime").textContent} · ${sends.length ? `${sent} of ${sends.length} outside action${sends.length > 1 ? "s" : ""} verified` : "nothing left this computer except your request to the model"}`;
+	$("saveRecipe").hidden = m.status !== "succeeded" || !Object.values(m.actions ?? {}).some((a) => a.effect !== "read.web");
 	foot("done");
-	if (cur === "idle") {
+}
+
+function focusFooter() {
+	const f = cap.dataset.f;
+	const target = { ask: "askYes", q: "qOpts", rec: "recItems", wait: "waitMain", done: "reply", run: "stop" }[f];
+	const node = target && $(target);
+	(node?.querySelector?.("button, textarea") ?? node)?.focus?.();
+}
+const showErr = (err) => announce(String(err?.message ?? err));
+
+// ---------- missions ----------
+function latestOpen() {
+	const list = Object.values(snap.missions).filter((m) => !m.archived);
+	list.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+	return (list.find((m) => NEEDS.has(m.status)) ?? list.find((m) => RUNNING.has(m.status)) ?? list[0])?.id;
+}
+function openMission(id) {
+	current = id;
+	readEvidence = false;
+	$("evidence").hidden = true;
+	renderMission();
+	setState("mission");
+}
+async function startMission(text) {
+	remember(text);
+	try {
+		const r = await api.missions.create({ text, requestId: reqId() });
+		current = r.missionId;
+		live[current] = { text: "", streaming: false };
+		lit[current] = new Set();
+		runStart[current] = Date.now();
 		setState("mission");
-		notify(heading, finalAnswer || text);
-	} else if (cur === "mission" && prefs.autoExpand && kind !== "warn" && finalAnswer.length > 1200) {
-		setState("read");
+		renderMission();
+	} catch (err) {
+		showErr(err);
+		$("box").value = text;
 	}
-	if (cur !== "idle") setTimeout(() => $("reply").focus(), 400);
+}
+async function followUp(text) {
+	const m = mission();
+	if (!m) return startMission(text);
+	remember(text);
+	try {
+		await api.missions.followUp({ missionId: m.id, text, requestId: reqId() });
+	} catch (err) {
+		showErr(err);
+	}
+}
+function newTask() {
+	current = undefined;
+	setState("chat");
+	mood();
+}
+function copyAnswer() {
+	const t = mission()?.answer || live[current]?.text;
+	if (!t) return;
+	api.clipboard.write(t);
+	$("copy").textContent = "Copied ✓";
+	setTimeout(() => ($("copy").textContent = "Copy"), 1400);
 }
 
 function notify(title, body) {
 	try {
-		const n = new Notification(`midnight.server · ${title}`, { body: body.replace(/[#*_`>[\]]/g, "").slice(0, 180), silent: true });
+		const n = new Notification(`midnight · ${title}`, { body: String(body).replace(/[#*_`>[\]]/g, "").slice(0, 180), silent: true });
 		n.onclick = () => {
-			midnight.focus();
-			if (!inMission()) setState("mission");
+			api.ui.focus();
+			setState("mission");
 		};
 	} catch {}
 }
 
-function newTask() {
-	mood("idle");
-	foot("none");
-	hasMission = false;
-	running = false;
-	answer = finalAnswer = "";
-	drawAnswer();
-	midnight.reset();
-	setState("chat");
+// ---------- the mission stack ----------
+function card(m, kind, sub) {
+	return el(
+		"button",
+		{ class: "card", role: "listitem", "data-k": kind, onclick: () => openMission(m.id), "aria-label": `${m.title}, ${sub}` },
+		el("i", { "aria-hidden": "true" }),
+		el("div", {}, el("b", {}, m.title), el("span", {}, sub)),
+		el("em", {}, new Date(m.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
+	);
+}
+async function renderStack() {
+	const box = $("stack");
+	const list = Object.values(snap.missions).filter((m) => !m.archived);
+	const by = (a, b) => (a.updatedAt < b.updatedAt ? 1 : -1);
+	const needs = list.filter((m) => NEEDS.has(m.status)).sort(by);
+	const act = list.filter((m) => RUNNING.has(m.status) || ["paused", "waiting-resource", "waiting-time"].includes(m.status)).sort(by);
+	const hist = list.filter((m) => TERMINAL.has(m.status)).sort(by).slice(0, 40);
+	box.textContent = "";
+	const section = (title, items) => {
+		box.append(el("h6", {}, title));
+		if (!items.length) box.append(el("div", { class: "empty" }, title === "NEEDS YOU" ? "Nothing needs you." : "None."));
+		else box.append(...items);
+	};
+	section("NEEDS YOU", needs.map((m) => card(m, "needs", m.status === "waiting-approval" ? `needs your OK · ${m.approvals?.[0]?.display?.title ?? ""}` : m.status === "needs-reconciliation" ? "an action's outcome is unknown" : m.waiting?.reason || "needs an answer")));
+	section("ACTIVE", act.map((m) => card(m, "active", m.status === "paused" ? "paused" : m.queued ?? m.waiting?.reason ?? (m.status === "running" ? "working" : m.status))));
+	const notes = (snap.notifications ?? []).filter((n) => n.status === "queued" || n.status === "held");
+	let watches = [];
+	try {
+		watches = await api.watches.list();
+	} catch {}
+	box.append(el("h6", {}, "WATCHING"));
+	if (!watches.length && !notes.length) box.append(el("div", { class: "empty" }, "No watches. Add one in Settings → Watches."));
+	for (const n of notes) {
+		box.append(
+			el(
+				"div",
+				{ class: "card", "data-k": "watch", role: "listitem" },
+				el("i", { "aria-hidden": "true" }),
+				el("div", {}, el("b", {}, n.title), el("span", { title: n.reason }, n.status === "held" ? `held for quiet hours · ${n.reason}` : n.reason)),
+				el(
+					"div",
+					{ class: "acts" },
+					n.missionId ? el("button", { class: "sb", onclick: () => openMission(n.missionId) }, "Open") : null,
+					el("button", { class: "sb", title: "Later", onclick: () => api.notifications.act({ notificationId: n.id, action: "later" }) }, "Later"),
+					el("button", { class: "sb", title: "Not useful", onclick: () => api.notifications.act({ notificationId: n.id, action: "not-useful" }) }, "✕"),
+				),
+			),
+		);
+	}
+	for (const w of watches) box.append(el("div", { class: "card", "data-k": "watch", role: "listitem" }, el("i", { "aria-hidden": "true" }), el("div", {}, el("b", {}, w.label), el("span", {}, w.status)), el("em", {}, "")));
+	section("HISTORY", hist.map((m) => card(m, m.status === "succeeded" ? "ok" : "warn", `${(DONE_H[m.status] ?? m.status).toLowerCase()}${m.outcome?.summary ? ` · ${m.outcome.summary}` : ""}`)));
+	try {
+		const r = await api.resources.status();
+		$("weather").textContent = r.weather?.text ?? "";
+		$("weather").title = r.weather ? `${r.weather.profile} · ${r.weather.power}` : "";
+	} catch {}
 }
 
-function copyAnswer() {
-	const t = finalAnswer || answer;
-	if (!t) return;
-	midnight.copy(t);
-	$("copy").textContent = "Copied ✓";
-	setTimeout(() => ($("copy").textContent = "Copy"), 1400);
+// ---------- evidence drawer (reading view) ----------
+async function toggleEvidence() {
+	readEvidence = !readEvidence;
+	const box = $("evidence");
+	if (!readEvidence) return (box.hidden = true);
+	box.hidden = false;
+	box.textContent = "Loading…";
+	try {
+		const r = await api.query.mission(current);
+		box.textContent = "";
+		if (!r.evidence.length) box.append(el("div", { class: "empty" }, "No evidence recorded for this mission."));
+		for (const e of r.evidence.slice().reverse()) {
+			const where = e.kind === "web" ? e.source : e.kind === "sheet" ? `${e.source.split(/[\\/]/).pop()} › ${e.locator.sheet}!${e.locator.range}` : e.kind === "connector" ? `${e.source} · ${e.locator.account ?? ""} · retrieved ${e.freshness ?? ""}` : e.kind === "calculation" ? "calculation" : e.source;
+			const node = el("div", { class: "ev" }, el("small", { title: where }, `${e.kind.toUpperCase()} · ${where} · ${new Date(e.capturedAt).toLocaleString()}`));
+			if (e.derived) node.append(el("p", {}, el("code", {}, `${e.derived.formula} = ${e.derived.result}`), `\n${Object.entries(e.derived.inputs).map(([k, v]) => `${k} = ${v}`).join(", ")}`));
+			else if (e.excerpt) node.append(el("p", {}, e.excerpt));
+			if (e.kind === "web") node.onclick = () => api.openExternal(e.source);
+			box.append(node);
+		}
+	} catch (err) {
+		box.textContent = String(err.message);
+	}
 }
 
 // ---------- prompt history (per viewer; optional) ----------
@@ -317,14 +754,14 @@ async function checkClipboard() {
 	c.hidden = true;
 	let t = "";
 	try {
-		t = (await midnight.clipboard()).trim();
+		t = (await api.clipboard.read()).trim();
 	} catch {}
 	if (/^https?:\/\/\S+$/i.test(t)) {
 		clip = { kind: "url", value: t };
 		c.textContent = `⤓ summarize ${clip40(host(t), 22)}`;
 	} else if (t.length > 280) {
 		clip = { kind: "text", value: t };
-		c.textContent = `⤓ summarize copied text`;
+		c.textContent = "⤓ summarize copied text";
 	}
 	if (clip) {
 		c.hidden = false;
@@ -333,10 +770,7 @@ async function checkClipboard() {
 }
 $("chipClip").onclick = () => {
 	if (!clip) return;
-	const t =
-		clip.kind === "url"
-			? `Summarize this page: ${clip.value}`
-			: `Summarize this text I copied (key points, then anything I should act on):\n\n${clip.value}`;
+	const t = clip.kind === "url" ? `Summarize this page: ${clip.value}` : `Summarize this text I copied (key points, then anything I should act on):\n\n${clip.value}`;
 	$("chipClip").hidden = true;
 	startMission(t);
 };
@@ -350,9 +784,8 @@ $("box").onkeydown = (e) => {
 		if (!t) return;
 		box.value = "";
 		startMission(t);
-	} else if (e.key === "Escape") {
-		setState("idle");
-	} else if (e.key === "ArrowUp" && (box.selectionStart === 0 || !box.value) && history.length) {
+	} else if (e.key === "Escape") setState("idle");
+	else if (e.key === "ArrowUp" && (box.selectionStart === 0 || !box.value) && history.length) {
 		e.preventDefault();
 		hIdx = Math.min(history.length - 1, hIdx + 1);
 		box.value = history[hIdx];
@@ -366,7 +799,7 @@ $("reply").onkeydown = (e) => {
 	if (e.key === "Enter" && !e.shiftKey) {
 		e.preventDefault();
 		const t = $("reply").value.trim();
-		if (!t || running) return;
+		if (!t) return;
 		$("reply").value = "";
 		followUp(t);
 	}
@@ -378,209 +811,129 @@ $("reply").oninput = () => {
 };
 
 function stepTextSize(dir) {
-	const z = prefs.textSize;
-	let i = TEXT_SIZES.findIndex((v) => v >= z - 0.001);
+	let i = TEXT_SIZES.findIndex((v) => v >= prefs.textSize - 0.001);
 	if (i < 0) i = TEXT_SIZES.length - 1;
 	const next = dir === 0 ? 1 : TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, i + dir))];
-	midnight.textSize(next).then((v) => applyPrefs({ textSize: v }));
+	api.ui.textSize(next).then((v) => applyPrefs({ textSize: v }));
 }
 const toggleRead = () => {
 	if (cur === "read") setState("mission");
-	else if (hasMission) setState("read");
+	else if (mission()) setState("read");
 };
+const inMission = () => cur === "mission" || cur === "read";
 
 document.addEventListener("keydown", (e) => {
 	const typing = e.target.matches?.("textarea, input");
 	if (e.ctrlKey && !e.altKey && (e.key === "=" || e.key === "+")) return e.preventDefault(), stepTextSize(1);
 	if (e.ctrlKey && !e.altKey && e.key === "-") return e.preventDefault(), stepTextSize(-1);
 	if (e.ctrlKey && !e.altKey && e.key === "0") return e.preventDefault(), stepTextSize(0);
-	if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "e" && hasMission) return e.preventDefault(), toggleRead();
+	if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "e" && mission()) return e.preventDefault(), toggleRead();
 	if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c") return e.preventDefault(), copyAnswer();
-	if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l" && inMission() && !running) return e.preventDefault(), newTask();
-	if (!typing && inMission() && e.key === "Escape" && !running) return setState("idle");
+	if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l" && (inMission() || cur === "stack") && !RUNNING.has(mission()?.status)) return e.preventDefault(), newTask();
+	if (!typing && (inMission() || cur === "stack") && e.key === "Escape") return setState("idle");
+	if (cur === "stack" && !typing && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+		const cards = [...document.querySelectorAll("#stack .card[role=listitem]")].filter((c) => c.tagName === "BUTTON");
+		const i = cards.indexOf(document.activeElement);
+		cards[Math.max(0, Math.min(cards.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]?.focus();
+		return e.preventDefault();
+	}
 	// 1-9 open the numbered source of a finished answer
-	if (!typing && !e.ctrlKey && !e.altKey && /^[1-9]$/.test(e.key) && finalAnswer) {
-		const u = md.refs(finalAnswer)[e.key];
-		if (u) midnight.openExternal(u);
+	const m = mission();
+	if (!typing && !e.ctrlKey && !e.altKey && /^[1-9]$/.test(e.key) && m?.answer) {
+		const u = md.refs(m.answer)[e.key];
+		if (u) api.openExternal(u);
 	}
 });
 
 $("bMin").onclick = () => setState("idle");
-$("bPeek").onclick = () => midnight.peek();
-$("bRead").onclick = toggleRead;
+$("bMinStack").onclick = () => setState("idle");
+$("bPeek").onclick = () => api.peekBrowser();
+$("bRead").onclick = () => (cur === "read" ? toggleEvidence() : toggleRead());
+$("bRead").ondblclick = toggleRead;
+$("bStack").onclick = () => setState("stack");
+$("bStackChat").onclick = () => setState("stack");
+$("bNew").onclick = newTask;
 $("bLog").onclick = () => {
 	if (cap.dataset.log) delete cap.dataset.log;
 	else cap.dataset.log = "1";
 };
-$("stop").onclick = () => midnight.abort();
+$("stop").onclick = () => {
+	const m = mission();
+	if (m) api.missions.pause({ missionId: m.id }).catch(showErr);
+};
+$("pause").onclick = () => {
+	const m = mission();
+	if (m) api.missions.pause({ missionId: m.id }).catch(showErr);
+};
 $("again").onclick = newTask;
 $("copy").onclick = copyAnswer;
-$("planYes").onclick = () => {
-	midnight.decide(planId, true);
-	feed("▸", "ok", `approved · ${steps.length} steps`);
-	mood("work");
-	foot("run");
+$("saveRecipe").onclick = async () => {
+	const m = mission();
+	if (!m) return;
+	const r = await api.missions.saveRecipe({ missionId: m.id, label: m.title }).catch((err) => ({ ok: false, error: err.message }));
+	announce(r.ok ? "Saved as a routine. Review it in Settings → Routines before it runs." : r.error);
+	$("saveRecipe").textContent = r.ok ? "Saved ✓" : "Save routine";
 };
-$("planNo").onclick = () => {
-	midnight.decide(planId, false);
-	foot("run");
-};
-$("askYes").onclick = () => {
-	midnight.decide(askId, true);
-	feed("✓", "ok", `approved · ${$("askTitle").textContent}`);
-	mood("work");
-	foot("run");
-};
-$("askNo").onclick = () => {
-	midnight.decide(askId, false);
-	feed("✕", "warn", `declined · ${$("askTitle").textContent}`);
-	mood("work");
-	foot("run");
-};
-$("login").onclick = () => openSettings();
+$("login").onclick = () => openSettings("accounts");
 $("gearChat").onclick = () => openSettings();
-$("gearMission").onclick = () => openSettings();
+$("gearStack").onclick = () => openSettings();
 $("chipModel").onclick = () => openSettings("model");
+$("l-idle").onkeydown = (e) => (e.key === "Enter" || e.key === " ") && summon();
 
 function openSettings(section) {
 	setState("settings");
 	window.renderSettings?.(section);
 }
 function closeSettings() {
-	setState(prev === "settings" || prev === "idle" ? "chat" : prev);
+	setState(prev === "settings" || prev === "idle" ? (mission() ? "mission" : "chat") : prev);
 }
 window.closeSettings = closeSettings;
 
 function summon() {
-	if (!signedIn) {
-		openSettings("accounts");
-		return;
-	}
+	if (!prefs.onboarded || !signedIn) return openSettings(prefs.onboarded ? "accounts" : "welcome");
 	if (cur === "settings") return closeSettings();
-	if (cur === "idle") setState(hasMission ? "mission" : "chat");
-	else if (cur === "chat") setState("idle");
-	else if (!running && cap.dataset.f === "done") newTask();
-	else setState("idle");
+	if (cur === "idle") {
+		const needs = Object.values(snap.missions).filter((m) => NEEDS.has(m.status) && !m.archived);
+		if (needs.length === 1) return openMission(needs[0].id);
+		if (needs.length > 1) return setState("stack");
+		const m = mission();
+		return setState(m && !TERMINAL.has(m.status) ? "mission" : "chat");
+	}
+	if (cur === "chat") return setState("idle");
+	if (inMission() && TERMINAL.has(mission()?.status)) return newTask();
+	setState("idle");
 }
 $("l-idle").onclick = summon;
 
-// ---------- events from the agent ----------
-midnight.onAgent((m) => {
-	switch (m.type) {
-		case "summon":
-			summon();
-			break;
-		case "start":
-			break;
-		case "assistant_start":
-			answer = "";
-			drawAnswer();
-			break;
-		case "text":
-			if (!tFirst) tFirst = Date.now();
-			answer += m.delta;
-			drawAnswer();
-			break;
-		case "plan": {
-			steps = m.steps.map((s) => ({ ...s, st: "todo" }));
-			renderSteps();
-			if (m.auto) {
-				feed("▸", "ok", `plan · ${steps.length} steps · read-only, running`);
-				if (!inMission()) setState("mission");
-				break;
-			}
-			planId = m.id;
-			const gated = steps.some((s) => s.tag === "approval");
-			const parts = [];
-			if (m.usesComputer) parts.push("uses your screen");
-			parts.push(gated ? "sends are marked: asks before it sends" : "nothing leaves your computer");
-			$("planNote").textContent = (m.summary ? `${m.summary} · ` : "") + parts.join(" · ");
-			mood("ask");
-			foot("plan");
-			feed("▸", "look", "plan ready · waiting for your OK");
-			if (!inMission()) setState("mission");
-			break;
-		}
-		case "progress": {
-			const s = steps[m.step];
-			if (!s) break;
-			// a step starting means the ones before it are finished (the model doesn't have to say so)
-			if (m.status === "active") for (const x of steps.slice(0, m.step)) if (x.st !== "skipped") x.st = "done";
-			s.st = m.status;
-			if (m.note) s.note = m.note;
-			renderSteps();
-			feed(m.status === "done" ? "✓" : "▸", m.status === "done" ? "ok" : "act", `${m.status} · ${s.title}${m.note ? ` — ${m.note}` : ""}`);
-			break;
-		}
-		case "ask":
-			askId = m.id;
-			$("askTitle").textContent = m.title;
-			$("askDetail").textContent = m.detail ?? "";
-			$("askYes").textContent = m.approveLabel ?? "Approve";
-			$("askNo").textContent = m.declineLabel ?? "Decline";
-			mood("ask");
-			foot("ask");
-			feed("!", "warn", `needs approval · ${m.title}`);
-			if (!inMission()) setState("mission");
-			break;
-		case "tool_start": {
-			if (["plan", "progress", "ask"].includes(m.name)) break;
-			lit(m.name === "computer" ? "cDesk" : m.name === "user_browser" ? "cYours" : "cBrowser");
-			const [ic, cls, tx] = describe(m.name, m.args);
-			feed(ic, cls, tx);
-			break;
-		}
-		case "tool_end":
-			if (m.isError && running) feed("!", "warn", `${m.name} failed`);
-			else if (m.name === "search" && m.urls) feed("✓", "ok", `${m.urls.length} results`);
-			break;
-		case "open-settings":
-			openSettings();
-			break;
-		case "corner":
-			document.body.dataset.corner = m.corner;
-			break;
-		case "settings":
-			applyPrefs(m.settings);
-			break;
-		case "model":
-			signedIn = !!m.model;
-			setChip(m);
-			break;
-		case "error":
-			feed("!", "warn", m.message.slice(0, 80));
-			if (running) finish("warn", "Something went wrong", m.message);
-			break;
-		case "takeover":
-			if (hasMission && running) finish("warn", "You took over", "Stopped. Nothing further will run.");
-			break;
-		case "done":
-			if (running) finish("ok", "Done", "Finished.");
-			break;
-		case "relayout":
-			applyDims().then(() => midnight.size(cur));
-			break;
-	}
-});
-
 function setChip(c) {
 	$("chipModel").textContent = c.model || "no model";
-	$("idleSt").textContent = c.model ? ({ idle: "idle", work: "working", ask: "needs you", done: "done" }[cap.dataset.m] ?? "idle") : "sign in";
+	mood();
 }
 window.setAccel = (a) => {
-	accel = a.replace("CommandOrControl", "Ctrl");
-	$("hint").textContent = `${accel} · Esc closes`;
+	$("hint").textContent = `${a.replace("CommandOrControl", "Ctrl")} · Esc closes`;
 };
 window.applyPrefs = applyPrefs;
+window.missionApi = { openMission, current: () => current };
 
 async function init() {
+	wake();
 	await applyDims();
-	await midnight.size("idle");
-	const s = await midnight.init();
-	signedIn = !!s.hasModel;
-	document.body.dataset.corner = s.settings.corner;
-	applyPrefs(s.settings);
-	window.setAccel(s.settings.hotkey);
-	setChip(s.current);
+	await api.ui.size("idle");
+	try {
+		const s = await api.settings.get();
+		document.body.dataset.corner = s.settings.corner;
+		applyPrefs(s.settings);
+		window.setAccel(s.settings.hotkey);
+		signedIn = !!s.current?.model;
+		setChip(s.current ?? {});
+		engine = s.engine;
+	} catch {}
+	try {
+		snap = await api.query.snapshot();
+		engine = "ready";
+		current = latestOpen();
+		renderMission();
+	} catch {}
+	mood();
 }
 init();

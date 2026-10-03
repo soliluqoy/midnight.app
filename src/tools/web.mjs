@@ -1,6 +1,7 @@
 import { BrowserWindow, session as electronSession } from "electron";
-import { Type } from "typebox";
+import { READ_PAGES, SEARCH } from "./schemas.mjs";
 import { dedupeSearchRuns } from "../harness-utils.mjs";
+import { focus } from "./web-text.mjs";
 
 // Fast, text-only web access: search results as data and parallel page reading in a small pool of hidden
 // windows, with images, media, fonts and trackers blocked. The interactive `browser` tool stays for clicking.
@@ -108,41 +109,6 @@ const SERP = {
     })()`,
 	},
 };
-
-// Keep the passages that match the query, in page order, within the budget.
-function focus(text, query, budget) {
-	if (text.length <= budget) return text;
-	const paras = text.split(/\n{2,}/);
-	const terms = (query ?? "")
-		.toLowerCase()
-		.split(/[^\p{L}\p{N}]+/u)
-		.filter((w) => w.length > 2);
-	if (!terms.length) return `${text.slice(0, budget)}\n[… trimmed ${text.length - budget} chars]`;
-	const scored = paras.map((p, i) => {
-		const l = p.toLowerCase();
-		let s = i < 3 ? 2 : 0; // the opening usually frames the page
-		for (const t of terms) if (l.includes(t)) s += 1 + Math.min(3, l.split(t).length - 2) * 0.3;
-		if (/^#/.test(p)) s += 0.5;
-		return { i, p, s };
-	});
-	const keep = new Set();
-	let used = 0;
-	for (const x of [...scored].sort((a, b) => b.s - a.s || a.i - b.i)) {
-		if (x.s <= 0 && used > budget * 0.5) break;
-		if (used + x.p.length > budget) continue;
-		keep.add(x.i);
-		used += x.p.length + 2;
-	}
-	let prev = -1;
-	const parts = [];
-	for (const x of scored) {
-		if (!keep.has(x.i)) continue;
-		if (x.i !== prev + 1 && parts.length) parts.push("[…]");
-		parts.push(x.p);
-		prev = x.i;
-	}
-	return parts.join("\n\n");
-}
 
 export function createWeb(settings) {
 	const ses = electronSession.fromPartition(PARTITION);
@@ -369,15 +335,7 @@ export function createWeb(settings) {
 	const text = (t, details = {}) => ({ content: [{ type: "text", text: t }], details });
 
 	const searchTool = {
-		name: "search",
-		label: "Search",
-		description:
-			"Web search. Returns the top results (title, URL, snippet) as text in about a second, plus the engine's direct answer if it shows one. " +
-			"Pass several queries at once to cover different angles; they run in parallel.",
-		promptSnippet: "search: fast web search; returns titles, URLs and snippets (no screenshots)",
-		parameters: Type.Object({
-			queries: Type.Array(Type.String(), { description: "1-4 search queries", minItems: 1, maxItems: 4 }),
-		}),
+		...SEARCH,
 		async execute(_id, p, signal) {
 			const engine = settings.get().searchEngine;
 			const runs = dedupeSearchRuns(
@@ -403,16 +361,7 @@ export function createWeb(settings) {
 	};
 
 	const readTool = {
-		name: "read_pages",
-		label: "Read pages",
-		description:
-			"Read the main text of 1-8 web pages at once (they load in parallel, text only, no screenshots). " +
-			"Pass the user's question as `query` so long pages are trimmed to the relevant passages. Much faster than the browser tool.",
-		promptSnippet: "read_pages: read several URLs in parallel as clean text",
-		parameters: Type.Object({
-			urls: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }),
-			query: Type.Optional(Type.String({ description: "What you are looking for; focuses long pages" })),
-		}),
+		...READ_PAGES,
 		async execute(_id, p, signal) {
 			const urls = [...new Set(p.urls.slice(0, 8).map((u) => (/^[a-z]+:\/\//i.test(u) ? u : `https://${u}`)))];
 			const budget = Math.max(3000, Math.floor((PAGE_CHARS * 5) / Math.max(5, urls.length)) + (urls.length <= 2 ? 6000 : 0));
@@ -430,7 +379,11 @@ export function createWeb(settings) {
 				const body = focus(pg.text || pg.desc || "", p.query, budget);
 				return `[${i + 1}] ${pg.title}\n${pg.url}\n\n${body || "(no readable text; try the browser tool)"}`;
 			});
-			return text(out.join("\n\n---\n\n"), { urls: pages.map((pg) => pg.url) });
+			return text(out.join("\n\n---\n\n"), {
+				urls: pages.map((pg) => pg.url),
+				// what was actually read, for evidence: failed loads are not evidence
+				pages: pages.filter((pg) => pg.ok).map((pg) => ({ url: pg.url, title: pg.title, excerpt: focus(pg.text || pg.desc || "", p.query, 600) })),
+			});
 		},
 	};
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseDefaultModel, dedupeSearchRuns, pruneImages } from "../src/harness-utils.mjs";
+import { dedupeSearchRuns, pruneImages } from "../src/harness-utils.mjs";
+import { chooseDefaultModel } from "../src/runtime/models.mjs";
 
 const image = (size) => ({ type: "image", data: "x".repeat(size), mimeType: "image/jpeg" });
 

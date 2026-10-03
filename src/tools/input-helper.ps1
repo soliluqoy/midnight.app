@@ -304,11 +304,22 @@ function Click([int]$x, [int]$y, [string]$button, [int]$count) {
   }
 }
 
+# Fencing (plan ch. 06): input only runs under the current screen-lease epoch. 'arm' sets it, 'disarm' revokes it,
+# and any input op carrying an older (or no) epoch is rejected before it touches the mouse or keyboard.
+$script:epoch = -1
+$inputOps = @('move','click','drag','scroll','type','key','focus','setvalue','launch')
+
 while (($line = [Console]::In.ReadLine()) -ne $null) {
   try {
     $c = $line | ConvertFrom-Json
     $out = $null
+    if ($inputOps -contains $c.op) {
+      if ($script:epoch -lt 0) { throw "no screen lease (input revoked)" }
+      if ($c.epoch -eq $null -or [long]$c.epoch -ne $script:epoch) { throw "stale screen lease epoch $($c.epoch) (current $script:epoch)" }
+    }
     switch ($c.op) {
+      'arm'    { $script:epoch = [long]$c.epoch }
+      'disarm' { $script:epoch = -1 }
       'move'   { [void][In]::SetCursorPos([int]$c.x, [int]$c.y) }
       'click'  { $n = 1; if ($c.count) { $n = [int]$c.count }; $b = 'left'; if ($c.button) { $b = $c.button }; Click ([int]$c.x) ([int]$c.y) $b $n }
       'drag'   {

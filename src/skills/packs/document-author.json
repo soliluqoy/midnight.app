@@ -1,0 +1,14 @@
+{
+	"id": "document-author",
+	"version": 1,
+	"title": "Write a document",
+	"purpose": "Draft a structured Word document from selected files and notes, with sources.",
+	"inputs": ["topic", "source files"],
+	"outputs": ["report (DOCX)"],
+	"capabilities": ["read.local", "read.web", "compute", "artifact.stage", "local.write"],
+	"tools": ["files_find", "files_read", "sheet_read", "search", "read_pages", "report_create", "file_publish"],
+	"network": ["*"],
+	"resourceClass": "network-light",
+	"checks": [{ "kind": "artifact", "type": "report" }],
+	"prompt": "Gather facts from the selected files first, then the web if needed. Write with report_create (headings, short paragraphs, tables for numbers). Offer to save it to an output folder with file_publish."
+}

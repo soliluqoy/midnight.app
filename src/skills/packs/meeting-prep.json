@@ -1,0 +1,14 @@
+{
+	"id": "meeting-prep",
+	"version": 1,
+	"title": "Meeting pack",
+	"purpose": "Prepare a one-page brief for an upcoming meeting from explicitly selected files.",
+	"inputs": ["meeting", "files"],
+	"outputs": ["brief (DOCX or Markdown)"],
+	"capabilities": ["read.local", "compute", "artifact.stage"],
+	"tools": ["files_find", "files_read", "sheet_read", "report_create"],
+	"network": [],
+	"resourceClass": "local",
+	"checks": [{ "kind": "artifact", "type": "report" }],
+	"prompt": "Read only the selected sources. Produce a one-page brief: purpose, latest numbers with where they came from, open questions. Never contact attendees or join calls."
+}

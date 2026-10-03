@@ -25,19 +25,6 @@ export function pruneImages(messages, keep = KEEP_IMAGES) {
 	return out;
 }
 
-/** Select the best available default without requiring a provider login. */
-export function chooseDefaultModel(available, { preferred = "gpt-6-luna", fallback = "gpt-5.5" } = {}) {
-	const models = Array.isArray(available) ? available : [];
-	const sees = (model) => model?.input?.includes("image");
-	return (
-		models.find((model) => (model.provider === "openai" || model.provider === "openai-codex") && model.id === preferred) ??
-		models.find((model) => model.provider === "openai-codex" && model.id === fallback) ??
-		models.find((model) => sees(model) && model.reasoning) ??
-		models.find(sees) ??
-		models[0]
-	);
-}
-
 /**
  * Search engines often return the same URL for several related queries. Keep the
  * first (usually highest-ranked) occurrence to avoid repeating snippets and URLs
