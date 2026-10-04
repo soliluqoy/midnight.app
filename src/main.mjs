@@ -282,7 +282,7 @@ function startMissionShell() {
 				syncEsc();
 			}
 			if (m.type === "notification.created" && m.notifications) {
-				const n = m.notifications.at?.(0);
+				const n = m.notifications.find((n) => n.id === m.notificationId);
 				if (n && n.status === "queued" && !capsule.isFocused() && Notification.isSupported()) {
 					const toast = new Notification({ title: `midnight · ${n.title}`, body: String(n.reason ?? "").slice(0, 180), silent: true });
 					toast.on("click", () => (summon(), toCapsule({ kind: "shell", type: "open-mission", missionId: n.missionId })));

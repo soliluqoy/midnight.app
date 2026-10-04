@@ -143,10 +143,25 @@ const NS = {
 	updates: ["check", "install"],
 };
 const proxy = (obj) => obj;
+const overrides = {};
+const calls = [];
 const fill = (api) => {
 	for (const [k, names] of Object.entries(NS)) {
 		api[k] ??= {};
-		for (const n of names) api[k][n] ??= noop;
+		for (const n of names) {
+			const fallback = api[k][n] ?? noop;
+			api[k][n] = (...args) => {
+				const method = `${k}.${n}`;
+				calls.push({ method, args });
+				const spec = overrides[method];
+				const response = spec?.queue?.length ? spec.queue.shift() : spec;
+				const result = response && Object.hasOwn(response, "result") ? Promise.resolve(response.result) : fallback(...args);
+				return new Promise((resolve, reject) => setTimeout(() => {
+					if (response?.error) reject(new Error(response.error));
+					else Promise.resolve(result).then(resolve, reject);
+				}, response?.delay ?? 0));
+			};
+		}
 	}
 	return api;
 };
@@ -182,6 +197,8 @@ contextBridge.exposeInMainWorld(
 	}),
 );
 contextBridge.exposeInMainWorld("__fixture", {
+	configure: (patch) => Object.assign(overrides, patch),
+	calls: () => calls.slice(),
 	emit: (m) => listeners.forEach((fn) => fn(m)),
 	variant: (name) => {
 		current = variants[name];

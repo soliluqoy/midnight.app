@@ -20,6 +20,8 @@ jobs:
       - run: npm ci
       - name: Unit, end-to-end, adversarial and architecture tests
         run: npm test
+      - name: Dashboard interactions, async races and keyboard navigation
+        run: npm run test:ui
       - name: App starts, engine comes up, capsule renders without errors
         run: npm run test:smoke
       - name: Every capsule state renders without errors (pixel baselines are machine-specific)

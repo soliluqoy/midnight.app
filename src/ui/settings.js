@@ -25,15 +25,17 @@
 		return el;
 	};
 
-	const pretty = (acc) => acc.replace("CommandOrControl", "Ctrl").replace("Super", "Win");
+	const pretty = (acc) => acc.replace("CommandOrControl", /Mac/.test(navigator.platform) ? "Cmd" : "Ctrl").replace("Super", "Win");
 	const save = async (patch) => {
-		const r = await api.settings.set(patch);
-		S.settings = r.settings;
-		S.current = r.current;
-		if (r.error) setStatus(r.error, true);
-		if (patch.hotkey && !r.error) window.setAccel(r.settings.hotkey);
-		window.applyPrefs?.(r.settings);
-		render();
+		try {
+			const r = window.checkedResult(await api.settings.set(patch));
+			S.settings = r.settings;
+			S.current = r.current;
+			if (r.error) setStatus(r.error, true);
+			if (patch.hotkey && !r.error) window.setAccel(r.settings.hotkey);
+			window.applyPrefs?.(r.settings);
+			render();
+		} catch (err) { setStatus(String(err.message ?? err), true); }
 	};
 	function setStatus(text, err = false) {
 		status = { text, err };
@@ -41,7 +43,7 @@
 	}
 	const attempt = (fn, ok) => async () => {
 		try {
-			await fn();
+			window.checkedResult(await fn());
 			if (ok) setStatus(ok);
 		} catch (err) {
 			setStatus(String(err.message ?? err), true);
@@ -83,13 +85,14 @@
 		const cur = all.find((i) => i.value === value);
 		const btn = h("button", { class: "dd", type: "button", "aria-haspopup": "listbox", "aria-label": label }, h("span", {}, cur ? cur.label : empty), h("i", { "aria-hidden": "true" }, "▾"));
 		btn.onclick = () => {
+			if (openMenu && !openMenu.isConnected) closeMenu();
 			if (openMenu) return closeMenu();
 			const menu = h("div", { class: "dd-menu", role: "listbox" });
 			for (const g of groups) {
 				if (g.label) menu.append(h("div", { class: "dd-g" }, g.label));
 				for (const it of g.items) {
 					menu.append(
-						h("button", { class: `dd-i${it.value === value ? " sel" : ""}`, type: "button", role: "option", "aria-selected": String(it.value === value), onclick: () => { closeMenu(); onPick(it.value); } }, it.label, it.hint ? h("small", {}, it.hint) : null),
+						h("button", { class: `dd-i${it.value === value ? " sel" : ""}`, type: "button", role: "option", "aria-selected": String(it.value === value), onclick: () => { closeMenu(); value = it.value; btn.querySelector("span").textContent = it.label; onPick(it.value); } }, it.label, it.hint ? h("small", {}, it.hint) : null),
 					);
 				}
 			}
@@ -111,11 +114,19 @@
 		return h("button", { class: `switch${on ? " on" : ""}`, role: "switch", "aria-checked": String(on), "aria-label": label, onclick: fn });
 	}
 	function segmented(value, items, onPick, label) {
-		return h(
+		const group = h(
 			"div",
 			{ class: "seg", role: "radiogroup", "aria-label": label },
-			...items.map((it) => h("button", { class: it.value === value ? "on" : "", role: "radio", "aria-checked": String(it.value === value), title: it.title ?? "", onclick: () => onPick(it.value) }, it.label)),
+			...items.map((it) => h("button", { class: it.value === value ? "on" : "", role: "radio", "aria-checked": String(it.value === value), title: it.title ?? "", onclick: () => {
+				value = it.value;
+				[...group.children].forEach((button, i) => {
+					button.classList.toggle("on", items[i].value === value);
+					button.setAttribute("aria-checked", String(items[i].value === value));
+				});
+				onPick(it.value);
+			} }, it.label)),
 		);
+		return group;
 	}
 	const field = (label, sub, control) => h("div", { class: "field" }, h("label", {}, label, sub ? h("small", {}, sub) : null), control);
 	const sec = (id, title, ...kids) => h("div", { class: "sec", id: `sec-${id}` }, h("h6", {}, title), ...kids);
@@ -536,13 +547,18 @@
 	async function login(id, type, key) {
 		busy = id;
 		setStatus(key ? "Saving key…" : "Starting sign-in…");
-		const r = await api.auth.login(id, type, key);
-		busy = "";
-		modal?.remove();
-		modal = undefined;
-		if (r.ok) keyFor = "";
-		status = r.ok ? { text: "Signed in.", err: false } : { text: r.error === "Cancelled" ? "" : r.error, err: true };
-		await refresh();
+		try {
+			const r = window.checkedResult(await api.auth.login(id, type, key));
+			if (r.ok) keyFor = "";
+			status = { text: "Signed in.", err: false };
+		} catch (err) {
+			status = { text: err.message === "Cancelled" ? "" : String(err.message ?? err), err: true };
+		} finally {
+			busy = "";
+			modal?.remove();
+			modal = undefined;
+		}
+		try { await refresh(); } catch (err) { setStatus(String(err.message ?? err), true); }
 	}
 	async function logout(id) {
 		await api.auth.logout(id);
@@ -588,6 +604,7 @@
 	// ---------- render ----------
 	function render() {
 		if (!S) return;
+		closeMenu();
 		const keep = root.querySelector(".sbody")?.scrollTop ?? 0;
 		root.textContent = "";
 		root.append(
@@ -615,6 +632,6 @@
 		page = section === "welcome" ? "welcome" : "main";
 		scrollTo = section === "welcome" ? undefined : section;
 		status = { text: "", err: false };
-		await refresh();
+		try { await refresh(); } catch (err) { setStatus(String(err.message ?? err), true); }
 	};
 })();

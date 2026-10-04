@@ -86,11 +86,17 @@ function applyInPlace(s, e) {
 			m.archived = !!p.archived;
 			break;
 		case "run.started":
+			if (p.steer) {
+				m.lastInput = p.input;
+				feed(m, at, "▸", "act", `follow-up · ${String(p.input ?? "").slice(0, 60)}`);
+				break;
+			}
 			m.runs += 1;
 			m.runId = e.runId;
 			m.outcome = undefined;
 			m.checks = [];
 			m.recovery = undefined;
+			m.answerRef = undefined;
 			m.lastInput = p.input;
 			if (p.followUp) feed(m, at, "▸", "act", `follow-up · ${String(p.input ?? "").slice(0, 60)}`);
 			break;

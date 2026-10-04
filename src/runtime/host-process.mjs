@@ -110,7 +110,7 @@ async function auth(op, a) {
 		case "current": {
 			const { routeModel } = await import("./models.mjs");
 			try {
-				const r = await routeModel(rt, host.settings(), "cloud");
+				const r = await routeModel(rt, host.settings(), host.settings().privacy);
 				return { provider: r.route.provider, model: r.route.model };
 			} catch {
 				return { provider: "", model: "" };

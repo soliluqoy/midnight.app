@@ -45,6 +45,7 @@
       <button class="ib" id="bRead" title="Reading view (Ctrl+E)" aria-label="Reading view">⤢</button>
       <button class="ib" id="bMin" title="Tuck away (keeps working)" aria-label="Tuck away">—</button>
     </div>
+    <div class="mission-body" id="missionBody">
     <div class="strip" id="screenStrip" hidden></div>
     <div class="mp"><small>YOU ASKED</small><span id="prompt"></span></div>
     <ul class="steps" id="steps" aria-label="Plan"></ul>
@@ -53,6 +54,7 @@
     <div class="ans" id="ans" hidden></div>
     <div class="evidence" id="evidence" hidden></div>
     <div class="arts" id="arts" hidden></div>
+    </div>
     <div class="foot">
       <div class="f-run" id="fRun">
         <span class="mono" id="runNote">working · <b>Esc</b> to take over</span>
@@ -96,6 +98,7 @@
   </div>
   <!-- settings and first-run -->
   <div class="lay l-settings" id="l-settings"></div>
+  <div class="ui-error" id="uiError" role="alert" hidden><span id="errorText"></span><button class="ib" id="errorDismiss" aria-label="Dismiss error">×</button></div>
 </div>
 <script src="md.js"></script>
 <script src="app.js"></script>
