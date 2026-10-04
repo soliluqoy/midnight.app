@@ -3,35 +3,76 @@
 window.md = (() => {
 	const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 	const esc = (s) => s.replace(/[&<>"']/g, (c) => ESC[c]);
+	const trimUrl = (s) => {
+		s = s.replace(/[.,;]+$/, "");
+		for (const [open, close] of [["(", ")"], ["[", "]"]]) {
+			while (s.endsWith(close) && s.split(close).length > s.split(open).length) s = s.slice(0, -1);
+		}
+		return s;
+	};
+	function links(s, replace) {
+		const pattern = /\[([^\]]+)\]\((https?:\/\/)/g;
+		let out = "", cursor = 0, match;
+		while ((match = pattern.exec(s))) {
+			const start = match.index + match[1].length + 3;
+			let depth = 0;
+			let end = start;
+			for (; end < s.length; end++) {
+				if (/\s/.test(s[end])) break;
+				if (s[end] === "(") depth++;
+				if (s[end] === ")" && depth-- === 0) break;
+			}
+			if (s[end] !== ")") continue;
+			out += s.slice(cursor, match.index) + replace(match[1], s.slice(start, end));
+			cursor = end + 1;
+			pattern.lastIndex = cursor;
+		}
+		return out + s.slice(cursor);
+	}
 
 	// "1. [Title](https://…)" or "[1] Title — https://…" -> {1: url}
 	function refs(text) {
 		const out = {};
+		let fence;
 		for (const line of text.split("\n")) {
+			const f = line.match(/^\s*(`{3,}|~{3,})/);
+			if (f) {
+				if (!fence) fence = f[1][0];
+				else if (f[1][0] === fence) fence = undefined;
+				continue;
+			}
+			if (fence) continue;
 			const m = line.match(/^\s*(?:[-*]\s*)?\[?(\d{1,2})\]?[.):]?\s+(.*)$/);
 			if (!m) continue;
-			const u = m[2].match(/\((https?:\/\/[^\s)]+)\)/) ?? m[2].match(/(https?:\/\/[^\s<>]+)/);
-			if (u) out[m[1]] = u[1].replace(/[).,;]+$/, "");
+			let url;
+			const content = m[2].replace(/`[^`]*`/g, "");
+			links(content, (_label, u) => { url ??= u; return ""; });
+			url ??= content.match(/https?:\/\/[^\s<>]+/)?.[0];
+			if (url) out[m[1]] = trimUrl(url);
 		}
 		return out;
 	}
 
 	function inline(s, r) {
-		const codes = [];
-		s = s.replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
+		const tokens = [];
+		const protect = (html) => `\u0000${tokens.push(html) - 1}\u0000`;
+		const restore = (text) => text.replace(/\u0000(\d+)\u0000/g, (_, i) => tokens[+i]);
+		const format = (text) => text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*\w])\*(?!\s)([^*]+?)\*(?!\w)/g, "$1<em>$2</em>").replace(/~~(.+?)~~/g, "<del>$1</del>");
+		s = s.replace(/\u0000/g, "\ufffd");
+		s = s.replace(/`([^`]+)`/g, (_, c) => protect(`<code>${esc(c)}</code>`));
+		s = links(s, (label, url) => protect(`<a href="${esc(url)}" title="${esc(url)}">${restore(format(esc(label)))}</a>`));
+		s = s.replace(/(^|[\s(])(https?:\/\/[^\s<>\u0000]+)/g, (_, pre, raw) => {
+			const url = trimUrl(raw);
+			return pre + protect(`<a href="${esc(url)}" title="${esc(url)}">${esc(url.replace(/^https?:\/\/(www\.)?/, "").slice(0, 48))}</a>`) + raw.slice(url.length);
+		});
 		s = esc(s);
-		s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => `<a href="${u}" title="${u}">${t}</a>`);
-		s = s.replace(/(^|[\s(])(https?:\/\/[^\s<]*[^\s<.,;:)\]])/g, (_, pre, u) => `${pre}<a href="${u}" title="${u}">${u.replace(/^https?:\/\/(www\.)?/, "").slice(0, 48)}</a>`);
 		s = s.replace(/\[(\d{1,2}(?:\s*,\s*\d{1,2})*)\](?!\()/g, (_, list) =>
 			list
 				.split(/\s*,\s*/)
-				.map((n) => (r[n] ? `<a class="cite" href="${esc(r[n])}" title="${esc(r[n])}">${n}</a>` : `<sup class="cite">${n}</sup>`))
+				.map((n) => protect(r[n] ? `<a class="cite" href="${esc(r[n])}" title="${esc(r[n])}">${n}</a>` : `<sup class="cite">${n}</sup>`))
 				.join(""),
 		);
-		s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-		s = s.replace(/(^|[^*\w])\*(?!\s)([^*]+?)\*(?!\w)/g, "$1<em>$2</em>");
-		s = s.replace(/~~(.+?)~~/g, "<del>$1</del>");
-		return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[+i])}</code>`);
+		return restore(format(s));
 	}
 
 	const cells = (line) =>
@@ -53,7 +94,7 @@ window.md = (() => {
 			para = [];
 		};
 		const flushList = () => {
-			if (list) out.push(`<${list.tag}>${list.items.map((i) => `<li${i.sub ? ' class="sub"' : ""}>${inline(i.t, r)}</li>`).join("")}</${list.tag}>`);
+			if (list) out.push(`<${list.tag}${list.tag === "ol" && list.start !== 1 ? ` start="${list.start}"` : ""}>${list.items.map((i) => `<li${i.sub ? ' class="sub"' : ""}>${inline(i.t, r)}</li>`).join("")}</${list.tag}>`);
 			list = null;
 		};
 		const flush = () => {
@@ -90,7 +131,7 @@ window.md = (() => {
 				const sub = m[1].length >= 2;
 				if (!list || (list.tag !== tag && !sub)) {
 					flushList();
-					list = { tag, items: [] };
+					list = { tag, start: tag === "ol" ? parseInt(m[2], 10) : 1, items: [] };
 				}
 				list.items.push({ t: m[3], sub });
 			} else if ((m = line.match(/^\s*>\s?(.*)$/))) {

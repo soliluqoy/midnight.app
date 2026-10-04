@@ -25,6 +25,8 @@ Then press `Ctrl+Alt+M` (`Cmd+Alt+M` on macOS) and sign in from the gear icon. R
 
 The core packages are vendored as tarballs in `vendor/`. After changing `../midnight.server`, build it and run `npm run vendor && npm install`. `npm run dist` builds a package for the current OS into `release/`. Pushing a `v*` tag builds Windows, macOS arm64 and Linux on GitHub Actions and publishes a release.
 
+Run `npm test` for unit and backend checks, `npm run test:ui` for dashboard interaction regressions, `npm run test:smoke` for real app startup, and `npm run test:visual` for capsule screenshots.
+
 ## Features
 
 - **Capsule:** resting pill → `Ctrl+Alt+M` → ask box → mission card (steps, live log, approvals, streaming answer, receipts). Right-click → **Hide capsule**, or `Ctrl+H` while focused (`Cmd+H` on macOS), hides it while work continues. Use the summon shortcut or click the tray icon to show it again. Tray icon to quit.

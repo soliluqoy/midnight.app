@@ -41,6 +41,14 @@ button{cursor:pointer}
 .inp{flex:1;resize:none;border:1px solid #6a5aa8;border-radius:12px;padding:10px 12px;font-size:13.5px;line-height:1.45;color:var(--ink);background:rgba(10,9,22,.5);box-shadow:0 0 0 4px rgba(128,104,232,.12);outline:none;user-select:text}
 
 .l-mission{width:var(--w-mission);height:var(--h-mission);padding:15px 16px 16px;display:flex;flex-direction:column;gap:12px}
+.l-mission>.mh{flex-shrink:0}
+.mission-body{display:flex;flex-direction:column;gap:12px;flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
+.mission-body>.mp,.mission-body>.steps,.mission-body>.conn,.mission-body>.strip,.mission-body>.arts{flex-shrink:0}
+.foot{flex-shrink:0;max-height:65%;overflow:auto;overscroll-behavior:contain}
+.ui-error{position:absolute;z-index:20;left:12px;right:12px;bottom:12px;display:flex;align-items:center;gap:8px;background:#3a2632;border:1px solid #8a5670;border-radius:10px;padding:8px 10px;max-height:calc(100% - 24px);overflow:auto;font-size:12px}
+.ui-error[hidden]{display:none}
+.ui-error span{flex:1;min-width:0;overflow-wrap:anywhere;user-select:text}
+.ui-error button{flex-shrink:0}
 #cap[data-s=read] .l-mission{width:var(--w-read);height:var(--h-read);padding:18px 22px 18px}
 #cap[data-s=read] .mh .t b{max-width:none}
 #cap[data-s=read] #bRead{color:var(--lav);border-color:var(--lav)}

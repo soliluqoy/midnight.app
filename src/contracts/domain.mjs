@@ -156,6 +156,8 @@ export const EVENT_TYPES = [
 	"grant.revoked",
 	"watch.checked",
 	"watch.changed",
+	"watch.updated",
+	"watch.deleted",
 	"notification.created",
 	"notification.updated",
 	"lease.changed",

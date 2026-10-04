@@ -6,7 +6,7 @@ const api = window.midnight;
 
 let cur = "idle"; // idle | chat | mission | read | settings | stack
 let prev = "chat";
-let signedIn = true;
+let signedIn = false;
 let prefs = { textSize: 1, autoExpand: true, highContrast: false, reducedMotion: false, mode: "ask", privacy: "cloud", onboarded: true };
 const RANK = { idle: 0, chat: 1, mission: 2, stack: 2, settings: 2, read: 3 };
 const TEXT_SIZES = [0.9, 1, 1.15, 1.3, 1.45, 1.6];
@@ -21,6 +21,29 @@ let engine = "starting";
 let timer;
 let clip = null;
 let readEvidence = false;
+let viewRevision = 0;
+let settingsRevision = 0;
+let stackRevision = 0;
+let evidenceRevision = 0;
+let snapshotRequest;
+const pendingUpdates = new Map();
+const renderedContent = new WeakMap();
+const command = (e) => e.ctrlKey || e.metaKey;
+const commandName = /Mac/.test(navigator.platform) ? "Cmd" : "Ctrl";
+
+function checked(result) {
+	if (result?.ok === false) throw new Error(result.error || result.reason || "The request could not be completed.");
+	return result;
+}
+window.checkedResult = checked;
+
+function syncLayers() {
+	for (const layer of document.querySelectorAll(".lay")) {
+		const active = layer.classList.contains(`l-${cur === "read" ? "mission" : cur}`);
+		layer.inert = !active;
+		layer.setAttribute("aria-hidden", String(!active));
+	}
+}
 
 const TERMINAL = new Set(["succeeded", "partially-succeeded", "failed", "cancelled"]);
 const RUNNING = new Set(["queued", "planning", "ready", "running", "verifying", "recovering"]);
@@ -44,23 +67,37 @@ async function setState(s) {
 	const grow = RANK[s] > RANK[cur];
 	if (s === "settings" && cur !== "settings") prev = cur;
 	const from = cur;
+	const revision = ++viewRevision;
 	cur = s;
+	syncLayers();
 	if (grow) {
-		await api.ui.size(s);
+		try { await api.ui.size(s); } catch (err) { showErr(err); }
+		if (revision !== viewRevision) return;
 		cap.dataset.s = s;
 	} else {
 		cap.dataset.s = s;
-		setTimeout(() => cur === s && api.ui.size(s), prefs.reducedMotion ? 150 : 850);
+		setTimeout(() => revision === viewRevision && api.ui.size(s).catch(showErr), prefs.reducedMotion ? 150 : 850);
 	}
+	cap.scrollTop = 0;
 	if (s === "chat") {
 		checkClipboard();
 		setTimeout(async () => {
-			await api.ui.focus();
-			$("box").focus();
+			if (revision !== viewRevision) return;
+			try { await api.ui.focus(); } catch (err) { showErr(err); return; }
+			if (revision === viewRevision) $("box").focus({ preventScroll: true });
 		}, 350);
 	}
 	if (s === "stack") renderStack();
-	if ((s === "mission" || s === "read") && from !== "mission" && from !== "read") setTimeout(() => focusFooter(), 400);
+	if ((s === "mission" || s === "read") && from !== "mission" && from !== "read") setTimeout(() => {
+		if (revision !== viewRevision) return;
+		focusFooter();
+		acknowledgeVisibleApproval();
+	}, 400);
+	if (s !== "read") {
+		if (readEvidence) evidenceRevision++;
+		readEvidence = false;
+		$("evidence").hidden = true;
+	}
 	cap.dataset.e = s === "read" && readEvidence ? "1" : "";
 }
 
@@ -79,8 +116,8 @@ function mood() {
 	$("badge").textContent = String(badge);
 	$("badge").title = `${needs} need you${notes ? ` · ${notes} update${notes > 1 ? "s" : ""}` : ""}`;
 	let st = "idle";
-	if (!signedIn) st = "sign in";
-	else if (engine !== "ready") st = engine === "down" ? "engine stopped" : "starting";
+	if (engine !== "ready") st = engine === "down" ? "engine stopped" : "starting";
+	else if (!signedIn) st = "sign in";
 	else if (needs) st = "needs you";
 	else if (running) st = "working";
 	else if (snap.watching?.count) st = snap.watching.next ? `watching · ${new Date(snap.watching.next).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "watching";
@@ -123,7 +160,10 @@ function applyPrefs(s) {
 // ---------- engine events ----------
 function applyUpdate(m) {
 	if (m.seq <= snap.seq) return;
-	if (snap.seq && m.seq > snap.seq + 1) return resnapshot(); // a gap: never render a guessed state
+	if (m.seq > snap.seq + 1) {
+		pendingUpdates.set(m.seq, m);
+		return resnapshot(); // a gap: never render a guessed state
+	}
 	snap.seq = m.seq;
 	if (m.mission) {
 		const before = snap.missions[m.missionId];
@@ -131,28 +171,65 @@ function applyUpdate(m) {
 		onMissionChange(before, m.mission, m.type);
 	}
 	if (m.notifications) snap.notifications = m.notifications;
+	if (m.watching) snap.watching = m.watching;
 	if (m.screen !== undefined) snap.screen = m.screen;
-	if (m.missionId === current) renderMission();
+	if (m.missionId === current || m.screen !== undefined) renderMission();
 	if (cur === "stack") renderStack();
 	mood();
 }
-async function resnapshot() {
+function acceptSnapshot(s) {
+	if (!s || s.seq < snap.seq) return;
+	const before = snap;
+	snap = s;
+	if (!current) current = latestOpen();
+	for (const m of Object.values(s.missions)) onMissionChange(before.missions[m.id], m, "snapshot");
+	renderMission();
+	if (cur === "stack") renderStack();
+	mood();
+}
+function resnapshot() {
+	if (snapshotRequest) return snapshotRequest;
+	let received = false;
+	snapshotRequest = api.query.snapshot().then((s) => {
+		received = true;
+		acceptSnapshot(s);
+		for (const [seq, update] of [...pendingUpdates].sort(([a], [b]) => a - b)) {
+			if (seq <= snap.seq) pendingUpdates.delete(seq);
+			else if (seq === snap.seq + 1) {
+				pendingUpdates.delete(seq);
+				applyUpdate(update);
+			}
+		}
+	}).catch(() => {}).finally(() => {
+		snapshotRequest = undefined;
+		if (received && pendingUpdates.size) setTimeout(resnapshot, 50);
+	});
+	return snapshotRequest;
+}
+async function refreshShellState() {
+	const revision = ++settingsRevision;
 	try {
-		const s = await api.query.snapshot();
-		snap = s;
-		renderMission();
-		if (cur === "stack") renderStack();
+		const s = await api.settings.get();
+		if (revision !== settingsRevision) return;
+		document.body.dataset.corner = s.settings.corner;
+		applyPrefs(s.settings);
+		window.setAccel(s.settings.hotkey);
+		if (s.engine === "ready") {
+			signedIn = !!s.current?.model;
+			setChip(s.current ?? {});
+		} else if (engine !== "ready") engine = s.engine;
 		mood();
 	} catch {}
 }
 
 function onMissionChange(before, m, type) {
 	if (RUNNING.has(m.status) && !runStart[m.id]) runStart[m.id] = Date.now();
-	if (type === "run.started") {
+	if ((type === "run.started" && (!m.runId || before?.runId !== m.runId)) || (type === "snapshot" && m.runId && before?.runId !== m.runId)) {
 		live[m.id] = { text: "", streaming: false };
 		runStart[m.id] = Date.now();
 		lit[m.id] = new Set();
 	}
+	if (TERMINAL.has(m.status) && live[m.id]) live[m.id].streaming = false;
 	if (before?.status !== m.status) {
 		if (NEEDS.has(m.status)) announce(`${m.title}: needs you`);
 		if (TERMINAL.has(m.status)) {
@@ -173,6 +250,8 @@ function finishView(m) {
 }
 
 function onLive(e) {
+	const m = snap.missions[e.missionId];
+	if (m?.runId && e.runId && m.runId !== e.runId) return;
 	const l = (live[e.missionId] ??= { text: "", streaming: false });
 	if (e.type === "assistant_start") {
 		l.text = "";
@@ -194,10 +273,8 @@ api.on((m) => {
 	switch (m.kind) {
 		case "ready":
 			engine = "ready";
-			snap = m.snapshot;
-			if (!current) current = latestOpen();
-			renderMission();
-			mood();
+			acceptSnapshot(m.snapshot);
+			refreshShellState();
 			break;
 		case "update":
 			applyUpdate(m);
@@ -226,9 +303,12 @@ function onShell(m) {
 			document.body.dataset.corner = m.corner;
 			break;
 		case "settings":
+			settingsRevision++;
 			applyPrefs(m.settings);
+			window.setAccel(m.settings.hotkey);
 			break;
 		case "model":
+			settingsRevision++;
 			signedIn = !!m.model;
 			setChip(m);
 			mood();
@@ -256,7 +336,11 @@ function onShell(m) {
 			break;
 		case "engine":
 			engine = m.state;
-			if (m.state === "ready") resnapshot();
+			settingsRevision++;
+			if (m.state === "ready") {
+				resnapshot();
+				refreshShellState();
+			}
 			mood();
 			renderMission();
 			break;
@@ -308,6 +392,9 @@ function renderStrip() {
 const STEP_STATES = { todo: "todo", active: "active", done: "done", skipped: "skipped", failed: "failed" };
 function renderSteps(m) {
 	const ul = $("steps");
+	const key = JSON.stringify([m.id, m.steps]);
+	if (renderedContent.get(ul) === key) return;
+	renderedContent.set(ul, key);
 	ul.textContent = "";
 	for (const s of m.steps ?? []) {
 		const li = el("li", { "data-st": STEP_STATES[s.state] ?? "todo" }, el("i", { class: "si", "aria-hidden": "true" }), el("div", {}, el("b", {}, s.title), el("span", {}, s.note || s.detail || "")));
@@ -321,12 +408,25 @@ function renderSteps(m) {
 }
 function renderFeed(m) {
 	const f = $("feed");
-	f.textContent = "";
+	const existing = new Map([...f.children].map((node) => [node.dataset.key, node]));
+	const counts = new Map();
+	const rows = [];
 	for (const it of (m.feed ?? []).slice(-40)) {
+		const key = JSON.stringify([m.id, it]);
+		const count = (counts.get(key) ?? 0) + 1;
+		counts.set(key, count);
+		const rowKey = `${key}:${count}`;
+		if (existing.has(rowKey)) {
+			rows.push(existing.get(rowKey));
+			continue;
+		}
 		const ts = new Date(it.at);
 		const d = el("div", { class: `fl ${it.cls}`, title: it.text }, el("span", { class: "ts" }, `${String(ts.getMinutes()).padStart(2, "0")}:${String(ts.getSeconds()).padStart(2, "0")}`), el("span", { class: "ic" }, it.icon), el("span", { class: "tx" }, it.text));
-		f.append(d);
+		d.dataset.key = rowKey;
+		rows.push(d);
 	}
+	for (const node of [...f.children]) if (!rows.includes(node)) node.remove();
+	rows.forEach((node, i) => { if (f.children[i] !== node) f.insertBefore(node, f.children[i] ?? null); });
 }
 function renderArtifacts(m) {
 	const box = $("arts");
@@ -357,9 +457,16 @@ function drawAnswer() {
 		const l = live[m.id];
 		const streaming = !!l?.streaming && !TERMINAL.has(m.status);
 		const text = streaming ? l.text : m.answer || l?.text || "";
+		if (node.dataset.mission !== m.id) {
+			node.dataset.mission = m.id;
+			node.scrollTop = 0;
+		}
 		node.hidden = !text.trim();
 		if (node.hidden) return;
 		const stick = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
+		const key = JSON.stringify([m.id, text, streaming]);
+		if (renderedContent.get(node) === key) return;
+		renderedContent.set(node, key);
 		node.innerHTML = md.render(text) + (streaming ? '<span class="caret"></span>' : "");
 		if (streaming && stick) node.scrollTop = node.scrollHeight;
 	});
@@ -414,8 +521,28 @@ function foot(f) {
 	cap.dataset.f = f;
 }
 
-let shownApproval;
+const displayedApprovals = new Map();
+const decidingApprovals = new Set();
+let visibleApproval;
+async function ensureDisplayed(a) {
+	const key = `${a.id}:${a.nonce}`;
+	if (!displayedApprovals.has(key)) {
+		const request = api.approvals.displayed({ approvalId: a.id, nonce: a.nonce }).then(checked).catch((err) => {
+			displayedApprovals.delete(key);
+			throw err;
+		});
+		displayedApprovals.set(key, request);
+	}
+	return displayedApprovals.get(key);
+}
+function acknowledgeVisibleApproval() {
+	if (!visibleApproval || !inMission() || cap.dataset.s !== cur || document.hidden || cap.dataset.f !== "ask") return;
+	if (Number(getComputedStyle($("l-mission")).opacity) === 0) return;
+	ensureDisplayed(visibleApproval).catch(showErr);
+}
+document.addEventListener("visibilitychange", acknowledgeVisibleApproval);
 function renderFooter(m) {
+	visibleApproval = undefined;
 	if (engine === "down") {
 		$("waitNote").textContent = "Midnight's engine stopped. Your missions are saved; restart it to continue.";
 		$("waitMain").textContent = "Restart engine";
@@ -459,6 +586,7 @@ function renderFooter(m) {
 }
 
 function renderApproval(m, a) {
+	visibleApproval = a;
 	const d = a.display ?? {};
 	$("askTitle").textContent = d.title ?? "Midnight needs your OK";
 	const facts = $("askFacts");
@@ -480,36 +608,52 @@ function renderApproval(m, a) {
 	$("askEdit").hidden = !send;
 	$("askRoutine").hidden = !d.routine || !!d.plan;
 	const decide = (decision) => async () => {
+		if (!inMission() || current !== m.id || visibleApproval?.id !== a.id || decidingApprovals.has(a.id)) return;
+		decidingApprovals.add(a.id);
 		for (const b of ["askYes", "askNo", "askEdit", "askRoutine"]) $(b).disabled = true;
 		try {
-			await api.approvals.decide({ approvalId: a.id, nonce: a.nonce, intentHash: a.intentHash, decision });
+			await ensureDisplayed(a);
+			if (!inMission() || current !== m.id || visibleApproval?.id !== a.id) return;
+			checked(await api.approvals.decide({ approvalId: a.id, nonce: a.nonce, intentHash: a.intentHash, decision }));
 		} catch (err) {
 			showErr(err);
+			return false;
 		} finally {
-			for (const b of ["askYes", "askNo", "askEdit", "askRoutine"]) $(b).disabled = false;
+			decidingApprovals.delete(a.id);
+			for (const b of ["askYes", "askNo", "askEdit", "askRoutine"]) $(b).disabled = decidingApprovals.has(visibleApproval?.id);
 		}
+		return true;
 	};
 	$("askYes").onclick = decide("approve");
 	$("askNo").onclick = decide(send ? "keep-draft" : "decline");
 	$("askRoutine").onclick = decide("allow-routine");
 	$("askEdit").onclick = async () => {
-		await decide("keep-draft")();
+		if (!(await decide("keep-draft")())) return;
 		$("reply").value = "Change the draft: ";
 		setTimeout(() => $("reply").focus(), 300);
 	};
-	// Tell the engine the exact card was shown; only then can it be decided.
-	if (shownApproval !== a.id) {
-		shownApproval = a.id;
-		api.approvals.displayed({ approvalId: a.id, nonce: a.nonce }).catch(() => {});
-	}
 	foot("ask");
+	for (const b of ["askYes", "askNo", "askEdit", "askRoutine"]) $(b).disabled = decidingApprovals.has(a.id);
+	requestAnimationFrame(acknowledgeVisibleApproval);
 }
 
 function renderQuestion(m, q) {
+	const key = JSON.stringify([m.id, q]);
+	if (renderedContent.get($("qOpts")) === key) return foot("q");
+	renderedContent.set($("qOpts"), key);
 	$("qText").textContent = q.prompt;
 	const box = $("qOpts");
 	box.textContent = "";
-	const answer = (v) => api.missions.answer({ missionId: m.id, questionId: q.id, value: v }).catch(showErr);
+	let pending = false;
+	const answer = async (v) => {
+		if (pending) return;
+		pending = true;
+		const controls = [...box.querySelectorAll("button, textarea")];
+		controls.forEach((c) => c.disabled = true);
+		try { checked(await api.missions.answer({ missionId: m.id, questionId: q.id, value: v })); }
+		catch (err) { showErr(err); }
+		finally { pending = false; controls.forEach((c) => c.disabled = false); }
+	};
 	for (const o of q.options ?? []) box.append(el("button", { class: "pb", onclick: () => answer(o) }, o));
 	const inp = el("textarea", { class: "inp", rows: "1", placeholder: q.options?.length ? "Or type an answer… (Enter)" : "Type your answer… (Enter)", "aria-label": "Your answer" });
 	inp.onkeydown = (e) => {
@@ -523,6 +667,7 @@ function renderQuestion(m, q) {
 }
 
 function renderConfirm(m) {
+	renderedContent.delete($("qOpts"));
 	const c = (m.checks ?? []).find((x) => x.kind === "confirm" && x.state === "waiting");
 	$("qText").textContent = c ? `${c.label}?` : "Does this look right?";
 	const box = $("qOpts");
@@ -585,9 +730,15 @@ function focusFooter() {
 	const f = cap.dataset.f;
 	const target = { ask: "askYes", q: "qOpts", rec: "recItems", wait: "waitMain", done: "reply", run: "stop" }[f];
 	const node = target && $(target);
-	(node?.querySelector?.("button, textarea") ?? node)?.focus?.();
+	(node?.querySelector?.("button, textarea") ?? node)?.focus?.({ preventScroll: true });
 }
-const showErr = (err) => announce(String(err?.message ?? err));
+function showErr(err) {
+	const text = String(err?.message ?? err);
+	$("errorText").textContent = text;
+	$("uiError").hidden = false;
+	announce(text);
+}
+$("errorDismiss").onclick = () => $("uiError").hidden = true;
 
 // ---------- missions ----------
 function latestOpen() {
@@ -596,7 +747,13 @@ function latestOpen() {
 	return (list.find((m) => NEEDS.has(m.status)) ?? list.find((m) => RUNNING.has(m.status)) ?? list[0])?.id;
 }
 function openMission(id) {
+	if (current !== id) {
+		$("reply").value = "";
+		$("reply").style.height = "";
+		$("missionBody").scrollTop = 0;
+	}
 	current = id;
+	evidenceRevision++;
 	readEvidence = false;
 	$("evidence").hidden = true;
 	renderMission();
@@ -622,9 +779,11 @@ async function followUp(text) {
 	if (!m) return startMission(text);
 	remember(text);
 	try {
-		await api.missions.followUp({ missionId: m.id, text, requestId: reqId() });
+		checked(await api.missions.followUp({ missionId: m.id, text, requestId: reqId() }));
+		return true;
 	} catch (err) {
 		showErr(err);
+		return false;
 	}
 }
 function newTask() {
@@ -633,7 +792,8 @@ function newTask() {
 	mood();
 }
 function copyAnswer() {
-	const t = mission()?.answer || live[current]?.text;
+	const l = live[current];
+	const t = l?.streaming ? l.text : mission()?.answer || l?.text;
 	if (!t) return;
 	api.clipboard.write(t);
 	$("copy").textContent = "Copied ✓";
@@ -654,15 +814,19 @@ function notify(title, body) {
 function card(m, kind, sub) {
 	return el(
 		"button",
-		{ class: "card", role: "listitem", "data-k": kind, onclick: () => openMission(m.id), "aria-label": `${m.title}, ${sub}` },
+		{ class: "card", role: "listitem", "data-k": kind, "data-mission": m.id, onclick: () => openMission(m.id), "aria-label": `${m.title}, ${sub}` },
 		el("i", { "aria-hidden": "true" }),
 		el("div", {}, el("b", {}, m.title), el("span", {}, sub)),
 		el("em", {}, new Date(m.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
 	);
 }
 async function renderStack() {
-	const box = $("stack");
+	const revision = ++stackRevision;
 	const list = Object.values(snap.missions).filter((m) => !m.archived);
+	const notes = (snap.notifications ?? []).filter((n) => n.status === "queued" || n.status === "held");
+	const [watches, resources] = await Promise.all([api.watches.list().catch(() => []), api.resources.status().catch(() => ({}))]);
+	if (revision !== stackRevision || cur !== "stack") return;
+	const box = document.createDocumentFragment();
 	const by = (a, b) => (a.updatedAt < b.updatedAt ? 1 : -1);
 	const needs = list.filter((m) => NEEDS.has(m.status)).sort(by);
 	const act = list.filter((m) => RUNNING.has(m.status) || ["paused", "waiting-resource", "waiting-time"].includes(m.status)).sort(by);
@@ -675,11 +839,6 @@ async function renderStack() {
 	};
 	section("NEEDS YOU", needs.map((m) => card(m, "needs", m.status === "waiting-approval" ? `needs your OK · ${m.approvals?.[0]?.display?.title ?? ""}` : m.status === "needs-reconciliation" ? "an action's outcome is unknown" : m.waiting?.reason || "needs an answer")));
 	section("ACTIVE", act.map((m) => card(m, "active", m.status === "paused" ? "paused" : m.queued ?? m.waiting?.reason ?? (m.status === "running" ? "working" : m.status))));
-	const notes = (snap.notifications ?? []).filter((n) => n.status === "queued" || n.status === "held");
-	let watches = [];
-	try {
-		watches = await api.watches.list();
-	} catch {}
 	box.append(el("h6", {}, "WATCHING"));
 	if (!watches.length && !notes.length) box.append(el("div", { class: "empty" }, "No watches. Add one in Settings → Watches."));
 	for (const n of notes) {
@@ -701,22 +860,28 @@ async function renderStack() {
 	}
 	for (const w of watches) box.append(el("div", { class: "card", "data-k": "watch", role: "listitem" }, el("i", { "aria-hidden": "true" }), el("div", {}, el("b", {}, w.label), el("span", {}, w.status)), el("em", {}, "")));
 	section("HISTORY", hist.map((m) => card(m, m.status === "succeeded" ? "ok" : "warn", `${(DONE_H[m.status] ?? m.status).toLowerCase()}${m.outcome?.summary ? ` · ${m.outcome.summary}` : ""}`)));
-	try {
-		const r = await api.resources.status();
-		$("weather").textContent = r.weather?.text ?? "";
-		$("weather").title = r.weather ? `${r.weather.profile} · ${r.weather.power}` : "";
-	} catch {}
+	const target = $("stack");
+	const scroll = target.scrollTop;
+	const focused = document.activeElement.closest?.("[data-mission]")?.dataset.mission;
+	target.replaceChildren(box);
+	target.scrollTop = scroll;
+	if (focused) [...target.querySelectorAll("[data-mission]")].find((b) => b.dataset.mission === focused)?.focus({ preventScroll: true });
+	$("weather").textContent = resources.weather?.text ?? "";
+	$("weather").title = resources.weather ? `${resources.weather.profile} · ${resources.weather.power}` : "";
 }
 
 // ---------- evidence drawer (reading view) ----------
 async function toggleEvidence() {
+	const revision = ++evidenceRevision;
+	const id = current;
 	readEvidence = !readEvidence;
 	const box = $("evidence");
 	if (!readEvidence) return (box.hidden = true);
 	box.hidden = false;
 	box.textContent = "Loading…";
 	try {
-		const r = await api.query.mission(current);
+		const r = await api.query.mission(id);
+		if (revision !== evidenceRevision || current !== id || !readEvidence) return;
 		box.textContent = "";
 		if (!r.evidence.length) box.append(el("div", { class: "empty" }, "No evidence recorded for this mission."));
 		for (const e of r.evidence.slice().reverse()) {
@@ -728,7 +893,7 @@ async function toggleEvidence() {
 			box.append(node);
 		}
 	} catch (err) {
-		box.textContent = String(err.message);
+		if (revision === evidenceRevision && current === id && readEvidence) box.textContent = String(err.message);
 	}
 }
 
@@ -795,13 +960,21 @@ $("box").onkeydown = (e) => {
 		box.value = hIdx >= 0 ? history[hIdx] : "";
 	}
 };
-$("reply").onkeydown = (e) => {
+$("reply").onkeydown = async (e) => {
 	if (e.key === "Enter" && !e.shiftKey) {
 		e.preventDefault();
 		const t = $("reply").value.trim();
 		if (!t) return;
-		$("reply").value = "";
-		followUp(t);
+		const reply = $("reply");
+		const id = current;
+		if (reply.disabled) return;
+		reply.disabled = true;
+		const ok = await followUp(t);
+		if (ok && current === id && reply.value.trim() === t) {
+			reply.value = "";
+			reply.style.height = "";
+		}
+		reply.disabled = false;
 	}
 };
 $("reply").oninput = () => {
@@ -824,12 +997,17 @@ const inMission = () => cur === "mission" || cur === "read";
 
 document.addEventListener("keydown", (e) => {
 	const typing = e.target.matches?.("textarea, input");
-	if (e.ctrlKey && !e.altKey && (e.key === "=" || e.key === "+")) return e.preventDefault(), stepTextSize(1);
-	if (e.ctrlKey && !e.altKey && e.key === "-") return e.preventDefault(), stepTextSize(-1);
-	if (e.ctrlKey && !e.altKey && e.key === "0") return e.preventDefault(), stepTextSize(0);
-	if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "e" && mission()) return e.preventDefault(), toggleRead();
-	if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c") return e.preventDefault(), copyAnswer();
-	if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l" && (inMission() || cur === "stack") && !RUNNING.has(mission()?.status)) return e.preventDefault(), newTask();
+	if (e.key === "Escape" && !$("uiError").hidden) {
+		e.preventDefault();
+		$("uiError").hidden = true;
+		return;
+	}
+	if (command(e) && !e.altKey && (e.key === "=" || e.key === "+")) return e.preventDefault(), stepTextSize(1);
+	if (command(e) && !e.altKey && e.key === "-") return e.preventDefault(), stepTextSize(-1);
+	if (command(e) && !e.altKey && e.key === "0") return e.preventDefault(), stepTextSize(0);
+	if (command(e) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "e" && mission()) return e.preventDefault(), toggleRead();
+	if (command(e) && !e.altKey && e.shiftKey && e.key.toLowerCase() === "c") return e.preventDefault(), copyAnswer();
+	if (command(e) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "l" && (inMission() || cur === "stack") && !RUNNING.has(mission()?.status)) return e.preventDefault(), newTask();
 	if (!typing && (inMission() || cur === "stack") && e.key === "Escape") return setState("idle");
 	if (cur === "stack" && !typing && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
 		const cards = [...document.querySelectorAll("#stack .card[role=listitem]")].filter((c) => c.tagName === "BUTTON");
@@ -839,7 +1017,7 @@ document.addEventListener("keydown", (e) => {
 	}
 	// 1-9 open the numbered source of a finished answer
 	const m = mission();
-	if (!typing && !e.ctrlKey && !e.altKey && /^[1-9]$/.test(e.key) && m?.answer) {
+	if (!typing && !command(e) && !e.altKey && /^[1-9]$/.test(e.key) && m?.answer) {
 		const u = md.refs(m.answer)[e.key];
 		if (u) api.openExternal(u);
 	}
@@ -910,29 +1088,21 @@ function setChip(c) {
 	mood();
 }
 window.setAccel = (a) => {
-	$("hint").textContent = `${a.replace("CommandOrControl", "Ctrl")} · Esc closes`;
+	$("hint").textContent = `${a.replace("CommandOrControl", commandName)} · Esc closes`;
 };
 window.applyPrefs = applyPrefs;
 window.missionApi = { openMission, current: () => current };
 
 async function init() {
 	wake();
+	syncLayers();
 	await applyDims();
 	await api.ui.size("idle");
+	await refreshShellState();
 	try {
-		const s = await api.settings.get();
-		document.body.dataset.corner = s.settings.corner;
-		applyPrefs(s.settings);
-		window.setAccel(s.settings.hotkey);
-		signedIn = !!s.current?.model;
-		setChip(s.current ?? {});
-		engine = s.engine;
-	} catch {}
-	try {
-		snap = await api.query.snapshot();
+		const s = await api.query.snapshot();
 		engine = "ready";
-		current = latestOpen();
-		renderMission();
+		acceptSnapshot(s);
 	} catch {}
 	mood();
 }

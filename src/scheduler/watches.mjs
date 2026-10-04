@@ -238,12 +238,18 @@ export function createWatches(d) {
 		get,
 		list: () => store.all("SELECT * FROM watches ORDER BY created_at").map(row).map((w) => ({ ...w, status: w.paused ? "paused" : `Watching; next check ${w.nextDue ? new Date(w.nextDue).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "soon"}` })),
 		setPaused(id, paused) {
-			commit(() => store.run("UPDATE watches SET paused = ?, next_due = ? WHERE id = ?", paused ? 1 : 0, paused ? null : new Date(nextDue(get(id).recurrence, get(id).timezone, now())).toISOString(), id));
+			commit(() => {
+				store.run("UPDATE watches SET paused = ?, next_due = ? WHERE id = ?", paused ? 1 : 0, paused ? null : new Date(nextDue(get(id).recurrence, get(id).timezone, now())).toISOString(), id);
+				emit("watch.updated", { payload: { watchId: id, paused } });
+			});
 			schedule();
 			return get(id);
 		},
 		remove(id) {
-			commit(() => store.run("DELETE FROM watches WHERE id = ?", id));
+			commit(() => {
+				store.run("DELETE FROM watches WHERE id = ?", id);
+				emit("watch.deleted", { payload: { watchId: id } });
+			});
 			schedule();
 			return { ok: true };
 		},
